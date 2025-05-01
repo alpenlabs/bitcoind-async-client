@@ -1,4 +1,4 @@
-use bitcoin::{Address, Block, BlockHash, Network, Transaction, Txid, bip32::Xpriv, block::Header};
+use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
 use std::future::Future;
 
 use crate::{
@@ -57,7 +57,7 @@ pub trait Reader {
 
     /// Gets a [`Header`] at given height.
     fn get_block_header_at(&self, height: u64)
-    -> impl Future<Output = ClientResult<Header>> + Send;
+        -> impl Future<Output = ClientResult<Header>> + Send;
 
     /// Gets a [`Block`] at given height.
     fn get_block_at(&self, height: u64) -> impl Future<Output = ClientResult<Block>> + Send;

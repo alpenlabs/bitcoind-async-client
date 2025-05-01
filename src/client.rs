@@ -2,24 +2,24 @@ use std::{
     env::var,
     fmt,
     sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     },
     time::Duration,
 };
 
-use base64::{Engine, engine::general_purpose};
+use base64::{engine::general_purpose, Engine};
 use bitcoin::{
-    Address, Block, BlockHash, Network, Transaction, Txid,
     bip32::Xpriv,
     block::Header,
     consensus::{self, encode::serialize_hex},
+    Address, Block, BlockHash, Network, Transaction, Txid,
 };
 use reqwest::{
+    header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap},
 };
-use serde::{Deserialize, Serialize, de};
+use serde::{de, Deserialize, Serialize};
 use serde_json::{
     json,
     value::{RawValue, Value},
@@ -527,12 +527,11 @@ mod test {
     use std::sync::Once;
 
     use bitcoin::{
-        Amount, NetworkKind,
         consensus::{self, encode::deserialize_hex},
         hashes::Hash,
-        transaction,
+        transaction, Amount, NetworkKind,
     };
-    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     use super::*;
     use crate::{

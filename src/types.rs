@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 
 use bitcoin::{
-    Address, Amount, Block, BlockHash, SignedAmount, Transaction, Txid, Wtxid,
     absolute::Height,
     address::{self, NetworkUnchecked},
     block::Header,
     consensus::{self, encode},
+    Address, Amount, Block, BlockHash, SignedAmount, Transaction, Txid, Wtxid,
 };
 use serde::{
-    Deserialize, Deserializer, Serialize,
     de::{self, IntoDeserializer, Visitor},
+    Deserialize, Deserializer, Serialize,
 };
 use tracing::*;
 
