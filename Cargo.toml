@@ -42,7 +42,7 @@ tracing = { version = "0.1.41", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.98"
-corepc-node = { version = "0.7.0", features = ["28_0", "download"] }
+corepc-node = { version = "0.8.0", features = ["28_0", "download"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [profile.release]
