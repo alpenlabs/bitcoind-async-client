@@ -181,6 +181,21 @@ impl GetRawTransactionVerbosityZero {
     }
 }
 
+/// Result of JSON-RPC method `getmempoolinfo`.
+///
+/// Method call: `getmempoolinfo`
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct GetMempoolInfo {
+    pub loaded: bool,
+    pub size: usize,
+    pub bytes: usize,
+    pub usage: usize,
+    pub maxmempool: usize,
+    pub mempoolminfee: f64,
+    pub minrelaytxfee: f64,
+    pub unbroadcastcount: usize,
+}
+
 /// Result of JSON-RPC method `getrawtransaction` with verbosity set to 1.
 ///
 /// Method call: `getrawtransaction "txid" ( verbosity )`

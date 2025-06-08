@@ -33,7 +33,7 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateWallet, GetBlockVerbosityOne, GetBlockVerbosityZero,
-        GetBlockchainInfo, GetNewAddress, GetRawTransactionVerbosityOne,
+        GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawTransactionVerbosityOne,
         GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
         ImportDescriptorResult, ListDescriptors, ListTransactions, ListUnspent,
         PreviousTransactionOutput, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
@@ -312,6 +312,10 @@ impl Reader for Client {
 
     async fn get_raw_mempool(&self) -> ClientResult<Vec<Txid>> {
         self.call::<Vec<Txid>>("getrawmempool", &[]).await
+    }
+
+    async fn get_mempool_info(&self) -> ClientResult<GetMempoolInfo> {
+        self.call::<GetMempoolInfo>("getmempoolinfo", &[]).await
     }
 
     async fn get_raw_transaction_verbosity_zero(
@@ -644,6 +648,12 @@ mod test {
         let got = client.get_raw_mempool().await.unwrap();
         let expected = vec![txid];
         assert_eq!(expected, got);
+
+        // get_mempool_info
+        let got = client.get_mempool_info().await.unwrap();
+        assert!(got.loaded);
+        assert_eq!(got.size, 1);
+        assert_eq!(got.unbroadcastcount, 1);
 
         // estimate_smart_fee
         let got = client.estimate_smart_fee(1).await.unwrap();

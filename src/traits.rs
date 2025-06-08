@@ -4,7 +4,7 @@ use std::future::Future;
 use crate::{
     client::ClientResult,
     types::{
-        CreateRawTransaction, GetBlockchainInfo, GetRawTransactionVerbosityOne,
+        CreateRawTransaction, GetBlockchainInfo, GetMempoolInfo, GetRawTransactionVerbosityOne,
         GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
         ImportDescriptorResult, ListTransactions, ListUnspent, PreviousTransactionOutput,
         SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
@@ -84,6 +84,9 @@ pub trait Reader {
 
     /// Gets all transaction ids in mempool.
     fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<Vec<Txid>>> + Send;
+
+    /// Returns details on the active state of the mempool.
+    fn get_mempool_info(&self) -> impl Future<Output = ClientResult<GetMempoolInfo>> + Send;
 
     /// Gets a raw transaction by its [`Txid`].
     fn get_raw_transaction_verbosity_zero(
