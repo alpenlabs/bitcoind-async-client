@@ -5,12 +5,12 @@ use crate::{
     client::ClientResult,
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
-        GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawTransactionVerbosityOne,
-        GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListTransactions, ListUnspent, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SignRawTransactionWithWallet,
-        SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
-        WalletProcessPsbtResult,
+        GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempoolVerbose,
+        GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero, GetTransaction, GetTxOut,
+        ImportDescriptor, ImportDescriptorResult, ListTransactions, ListUnspent,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -87,6 +87,11 @@ pub trait Reader {
 
     /// Gets all transaction ids in mempool.
     fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<Vec<Txid>>> + Send;
+
+    /// Gets verbose representation of transactions in mempool.
+    fn get_raw_mempool_verbose(
+        &self,
+    ) -> impl Future<Output = ClientResult<GetRawMempoolVerbose>> + Send;
 
     /// Returns details on the active state of the mempool.
     fn get_mempool_info(&self) -> impl Future<Output = ClientResult<GetMempoolInfo>> + Send;

@@ -196,6 +196,43 @@ pub struct GetMempoolInfo {
     pub unbroadcastcount: usize,
 }
 
+/// Response from `getrawmempool` with `verbose=true`.
+///
+/// The top-level map key is the txid, and the value contains detailed mempool info per tx.
+pub type GetRawMempoolVerbose = BTreeMap<Txid, MempoolEntry>;
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct MempoolEntry {
+    pub vsize: usize,
+    pub weight: usize,
+    pub time: u64,
+    pub height: usize,
+    pub descendantcount: usize,
+    pub descendantsize: usize,
+    #[serde(default)]
+    pub ancestorcount: usize,
+    pub ancestorsize: usize,
+    pub wtxid: String,
+    pub fees: Option<MempoolFeeBreakdown>,
+    pub depends: Vec<Txid>,
+    pub spentby: Vec<Txid>,
+    #[serde(rename = "bip125-replaceable")]
+    pub bip125_replaceable: bool,
+    pub unbroadcast: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct MempoolFeeBreakdown {
+    #[serde(deserialize_with = "deserialize_bitcoin")]
+    pub base: Amount,
+    #[serde(deserialize_with = "deserialize_bitcoin")]
+    pub modified: Amount,
+    #[serde(deserialize_with = "deserialize_bitcoin")]
+    pub ancestor: Amount,
+    #[serde(deserialize_with = "deserialize_bitcoin")]
+    pub descendant: Amount,
+}
+
 /// Result of JSON-RPC method `getrawtransaction` with verbosity set to 1.
 ///
 /// Method call: `getrawtransaction "txid" ( verbosity )`
