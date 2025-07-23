@@ -36,8 +36,9 @@ pub enum ClientError {
     Body(String),
 
     /// HTTP status error, not retryable
+    // NOTE: Using u16 instead of reqwest::StatusCode because StatusCode doesn't implement Serialize/Deserialize
     #[error("Obtained failure status({0}): {1}")]
-    Status(String, String),
+    Status(u16, String),
 
     /// Error decoding the response, retry might not help
     #[error("Malformed Response: {0}")]

@@ -17,7 +17,7 @@ use bitcoin::{
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
-    Client as ReqwestClient,
+    Client as ReqwestClient, StatusCode,
 };
 use serde::{de, Deserialize, Serialize};
 use serde_json::{
@@ -188,7 +188,7 @@ impl Client {
                     } else if err.is_status() {
                         // Status error is unrecoverable
                         let e = match err.status() {
-                            Some(code) => ClientError::Status(code.to_string(), err.to_string()),
+                            Some(code) => ClientError::Status(code.as_u16(), err.to_string()),
                             _ => ClientError::Other(err.to_string()),
                         };
                         return Err(e);
