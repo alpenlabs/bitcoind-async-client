@@ -17,7 +17,7 @@ use bitcoin::{
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
-    Client as ReqwestClient, StatusCode,
+    Client as ReqwestClient,
 };
 use serde::{de, Deserialize, Serialize};
 use serde_json::{
@@ -165,6 +165,23 @@ impl Client {
             trace!(?response, "Response received");
             match response {
                 Ok(resp) => {
+                    // Check HTTP status code first before parsing body
+                    let resp = match resp.error_for_status() {
+                        Err(e) if e.is_status() => {
+                            if let Some(status) = e.status() {
+                                let reason =
+                                    status.canonical_reason().unwrap_or("Unknown").to_string();
+                                return Err(ClientError::Status(status.as_u16(), reason));
+                            } else {
+                                return Err(ClientError::Other(e.to_string()));
+                            }
+                        }
+                        Err(e) => {
+                            return Err(ClientError::Other(e.to_string()));
+                        }
+                        Ok(resp) => resp,
+                    };
+
                     let raw_response = resp
                         .text()
                         .await
@@ -946,5 +963,38 @@ mod test {
             .unwrap();
         assert_eq!(result.tx_results.len(), 2);
         assert_eq!(result.package_msg, "success");
+    }
+
+    #[tokio::test]
+    async fn test_invalid_credentials_return_401_error() {
+        init_tracing();
+
+        let (bitcoind, _) = get_bitcoind_and_client();
+        let url = bitcoind.rpc_url();
+
+        // Create client with invalid credentials
+        let invalid_client = Client::new(
+            url,
+            "wrong_user".to_string(),
+            "wrong_password".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Try to make any RPC call
+        let result = invalid_client.get_blockchain_info().await;
+
+        // Verify we get a 401 Status error, not a Parse error
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+
+        match error {
+            ClientError::Status(status_code, message) => {
+                assert_eq!(status_code, 401);
+                assert!(message.contains("Unauthorized"));
+            }
+            _ => panic!("Expected Status(401, _) error, but got: {error:?}"),
+        }
     }
 }
