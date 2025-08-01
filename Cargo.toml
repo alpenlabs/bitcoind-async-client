@@ -35,7 +35,7 @@ secp256k1 = { version = "0.29.0", features = [ # for optimization keep in sync w
   "global-context",
 ] }
 serde = "1.0.219"
-serde_json = { version = "1.0.140", features = ["raw_value"] }
+serde_json = { version = "1.0.142", features = ["raw_value"] }
 thiserror = "2.0.12"
 tokio = { version = "1.47.0", features = ["macros", "rt-multi-thread"] }
 tracing = { version = "0.1.41", default-features = false }
