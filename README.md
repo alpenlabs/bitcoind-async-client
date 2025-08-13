@@ -9,6 +9,7 @@
 
 - Async bitcoin Client based on [`reqwest`](https://crates.io/crates/reqwest)
 - Supports bitcoin core versions `28.0` and above
+- PSBT and wallet RPC methods for advanced transaction handling
 
 ## Usage
 
