@@ -796,10 +796,13 @@ mod test {
         let got = client.list_transactions(None).await.unwrap();
         assert_eq!(got.len(), 10);
 
-        // get_utxos
+        // list_unspent
         // let's mine one more block
         mine_blocks(&bitcoind, 1, None).unwrap();
-        let got = client.get_utxos().await.unwrap();
+        let got = client
+            .list_unspent(None, None, None, None, None)
+            .await
+            .unwrap();
         assert_eq!(got.len(), 3);
 
         // listdescriptors

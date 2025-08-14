@@ -191,6 +191,10 @@ pub trait Wallet {
 
     /// Gets all Unspent Transaction Outputs (UTXOs) for the underlying Bitcoin
     /// client's wallet.
+    #[deprecated(
+        since = "0.4.0",
+        note = "Does not adhere with bitcoin core RPC naming. Use `list_unspent` instead"
+    )]
     fn get_utxos(&self) -> impl Future<Output = ClientResult<Vec<ListUnspent>>> + Send;
 
     /// Lists transactions in the underlying Bitcoin client's wallet.
