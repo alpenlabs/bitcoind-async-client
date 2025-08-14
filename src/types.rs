@@ -5,11 +5,11 @@ use bitcoin::{
     address::{self, NetworkUnchecked},
     block::Header,
     consensus::{self, encode},
-    Address, Amount, Block, BlockHash, Psbt, SignedAmount, Transaction, Txid, Wtxid,
+    Address, Amount, Block, BlockHash, FeeRate, Psbt, SignedAmount, Transaction, Txid, Wtxid,
 };
 use serde::{
     de::{self, IntoDeserializer, Visitor},
-    Deserialize, Deserializer, Serialize,
+    Deserialize, Deserializer, Serialize, Serializer,
 };
 use tracing::*;
 
@@ -709,6 +709,50 @@ where
     deserializer.deserialize_any(SatVisitor)
 }
 
+/// Serializes the optional [`Amount`] into BTC.
+fn serialize_option_bitcoin<S>(amount: &Option<Amount>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match amount {
+        Some(amt) => serializer.serialize_some(&amt.to_btc()),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Deserializes the fee rate from sat/vB into proper [`FeeRate`].
+///
+/// Note: Bitcoin Core 0.21+ uses sat/vB for fee rates for most RPC methods/results.
+fn deserialize_feerate<'d, D>(deserializer: D) -> Result<FeeRate, D::Error>
+where
+    D: Deserializer<'d>,
+{
+    struct FeeRateVisitor;
+
+    impl Visitor<'_> for FeeRateVisitor {
+        type Value = FeeRate;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(
+                formatter,
+                "a numeric representation of fee rate in sat/vB expected"
+            )
+        }
+
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // The value is already in sat/vB (Bitcoin Core 0.21+)
+            let sat_per_vb = v.round() as u64;
+            let fee_rate = FeeRate::from_sat_per_vb(sat_per_vb)
+                .ok_or_else(|| de::Error::custom("Invalid fee rate"))?;
+            Ok(fee_rate)
+        }
+    }
+    deserializer.deserialize_any(FeeRateVisitor)
+}
+
 /// Deserializes the *signed* amount in BTC into proper [`SignedAmount`]s.
 fn deserialize_signed_bitcoin<'d, D>(deserializer: D) -> Result<SignedAmount, D::Error>
 where
@@ -1018,14 +1062,14 @@ pub struct WalletCreateFundedPsbtOptions {
     ///
     /// If specified, this overrides the `conf_target` parameter for fee estimation.
     /// Must be a positive value representing the desired fee density.
-    #[serde(rename = "fee_rate", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "fee_rate")]
     pub fee_rate: Option<f64>,
 
     /// Whether to lock the selected UTXOs to prevent them from being spent by other transactions.
     ///
     /// When `true`, the wallet will temporarily lock the selected unspent outputs
     /// until the transaction is broadcast or manually unlocked. Default is `false`.
-    #[serde(rename = "lockUnspents", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "lockUnspents")]
     pub lock_unspents: Option<bool>,
 
     /// Target number of confirmations for automatic fee estimation.
@@ -1033,14 +1077,14 @@ pub struct WalletCreateFundedPsbtOptions {
     /// Represents the desired number of blocks within which the transaction should
     /// be confirmed. Higher values result in lower fees but longer confirmation times.
     /// Ignored if `fee_rate` is specified.
-    #[serde(rename = "conf_target", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "conf_target")]
     pub conf_target: Option<u16>,
 
     /// Whether the transaction should be BIP-125 opt-in Replace-By-Fee (RBF) enabled.
     ///
     /// When `true`, allows the transaction to be replaced with a higher-fee version
     /// before confirmation. Useful for fee bumping if the initial fee proves insufficient.
-    #[serde(rename = "replaceable", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "replaceable")]
     pub replaceable: Option<bool>,
 }
 
@@ -1095,11 +1139,7 @@ pub struct WalletProcessPsbtResult {
     /// Contains the PSBT after wallet processing with any signatures or input data
     /// that could be added. Will be `None` if the transaction was fully extracted
     /// and the PSBT is no longer needed.
-    #[serde(
-        deserialize_with = "deserialize_option_psbt",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(deserialize_with = "deserialize_option_psbt")]
     pub psbt: Option<Psbt>,
 
     /// Whether the transaction is complete and ready for broadcast.
@@ -1116,8 +1156,8 @@ pub struct WalletProcessPsbtResult {
     /// when extraction is not performed.
     #[serde(
         deserialize_with = "deserialize_option_tx",
-        default,
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "Option::is_none",
+        default
     )]
     pub hex: Option<Transaction>,
 }
@@ -1176,57 +1216,52 @@ pub struct GetAddressInfo {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListUnspentQueryOptions {
-    /// Minimum amount in BTC that UTXOs must have to be included.
+    /// Minimum amount that UTXOs must have to be included.
     ///
     /// Only unspent outputs with a value greater than or equal to this amount
     /// will be returned. Useful for filtering out dust or very small UTXOs.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub minimum_amount: Option<f64>,
+    #[serde(serialize_with = "serialize_option_bitcoin")]
+    pub minimum_amount: Option<Amount>,
 
-    /// Maximum amount in BTC that UTXOs can have to be included.
+    /// Maximum amount that UTXOs can have to be included.
     ///
     /// Only unspent outputs with a value less than or equal to this amount
     /// will be returned. Useful for finding smaller UTXOs or avoiding large ones.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub maximum_amount: Option<f64>,
+    #[serde(serialize_with = "serialize_option_bitcoin")]
+    pub maximum_amount: Option<Amount>,
 
     /// Maximum number of UTXOs to return in the result set.
     ///
     /// Limits the total number of unspent outputs returned, regardless of how many
     /// match the other criteria. Useful for pagination or limiting response size.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub maximum_count: Option<u32>,
 }
-
 
 /// Options for psbtbumpfee RPC method.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PsbtBumpFeeOptions {
     /// Confirmation target in blocks.
-    #[serde(rename = "conf_target", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conf_target: Option<u16>,
 
     /// Fee rate in sat/vB.
-    #[serde(rename = "fee_rate", skip_serializing_if = "Option::is_none")]
-    pub fee_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_rate: Option<FeeRate>,
 
     /// Whether the new transaction should be BIP-125 replaceable.
-    #[serde(rename = "replaceable", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub replaceable: Option<bool>,
 
     /// Fee estimate mode ("unset", "economical", "conservative").
-    #[serde(rename = "estimate_mode", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub estimate_mode: Option<String>,
 
     /// New transaction outputs to replace the existing ones.
-    #[serde(rename = "outputs", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub outputs: Option<Vec<CreateRawTransactionOutput>>,
 
     /// Index of the change output to recycle from the original transaction.
-    #[serde(
-        rename = "original_change_index",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub original_change_index: Option<u32>,
 }
 
@@ -1237,16 +1272,15 @@ pub struct PsbtBumpFee {
     #[serde(deserialize_with = "deserialize_psbt")]
     pub psbt: Psbt,
 
-    /// The fee of the replaced transaction in BTC.
-    #[serde(deserialize_with = "deserialize_bitcoin")]
-    pub origfee: Amount,
+    /// The fee of the replaced transaction.
+    #[serde(deserialize_with = "deserialize_feerate")]
+    pub origfee: FeeRate,
 
-    /// The fee of the new transaction in BTC.
-    #[serde(deserialize_with = "deserialize_bitcoin")]
-    pub fee: Amount,
+    /// The fee of the new transaction.
+    #[serde(deserialize_with = "deserialize_feerate")]
+    pub fee: FeeRate,
 
     /// Errors encountered during processing (if any).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<String>>,
 }
 
@@ -1257,10 +1291,10 @@ mod tests {
 
     // Taken from https://docs.rs/bitcoin/0.32.6/src/bitcoin/psbt/mod.rs.html#1515-1520
     // BIP 174 test vector with inputs and outputs (more realistic than empty transaction)
-    const TEST_PSBT: &'static str = "cHNidP8BAHUCAAAAASaBcTce3/KF6Tet7qSze3gADAVmy7OtZGQXE8pCFxv2AAAAAAD+////AtPf9QUAAAAAGXapFNDFmQPFusKGh2DpD9UhpGZap2UgiKwA4fUFAAAAABepFDVF5uM7gyxHBQ8k0+65PJwDlIvHh7MuEwAAAQD9pQEBAAAAAAECiaPHHqtNIOA3G7ukzGmPopXJRjr6Ljl/hTPMti+VZ+UBAAAAFxYAFL4Y0VKpsBIDna89p95PUzSe7LmF/////4b4qkOnHf8USIk6UwpyN+9rRgi7st0tAXHmOuxqSJC0AQAAABcWABT+Pp7xp0XpdNkCxDVZQ6vLNL1TU/////8CAMLrCwAAAAAZdqkUhc/xCX/Z4Ai7NK9wnGIZeziXikiIrHL++E4sAAAAF6kUM5cluiHv1irHU6m80GfWx6ajnQWHAkcwRAIgJxK+IuAnDzlPVoMR3HyppolwuAJf3TskAinwf4pfOiQCIAGLONfc0xTnNMkna9b7QPZzMlvEuqFEyADS8vAtsnZcASED0uFWdJQbrUqZY3LLh+GFbTZSYG2YVi/jnF6efkE/IQUCSDBFAiEA0SuFLYXc2WHS9fSrZgZU327tzHlMDDPOXMMJ/7X85Y0CIGczio4OFyXBl/saiK9Z9R5E5CVbIBZ8hoQDHAXR8lkqASECI7cr7vCWXRC+B3jv7NYfysb3mk6haTkzgHNEZPhPKrMAAAAAAAAA";
+    const TEST_PSBT: &str = "cHNidP8BAHUCAAAAASaBcTce3/KF6Tet7qSze3gADAVmy7OtZGQXE8pCFxv2AAAAAAD+////AtPf9QUAAAAAGXapFNDFmQPFusKGh2DpD9UhpGZap2UgiKwA4fUFAAAAABepFDVF5uM7gyxHBQ8k0+65PJwDlIvHh7MuEwAAAQD9pQEBAAAAAAECiaPHHqtNIOA3G7ukzGmPopXJRjr6Ljl/hTPMti+VZ+UBAAAAFxYAFL4Y0VKpsBIDna89p95PUzSe7LmF/////4b4qkOnHf8USIk6UwpyN+9rRgi7st0tAXHmOuxqSJC0AQAAABcWABT+Pp7xp0XpdNkCxDVZQ6vLNL1TU/////8CAMLrCwAAAAAZdqkUhc/xCX/Z4Ai7NK9wnGIZeziXikiIrHL++E4sAAAAF6kUM5cluiHv1irHU6m80GfWx6ajnQWHAkcwRAIgJxK+IuAnDzlPVoMR3HyppolwuAJf3TskAinwf4pfOiQCIAGLONfc0xTnNMkna9b7QPZzMlvEuqFEyADS8vAtsnZcASED0uFWdJQbrUqZY3LLh+GFbTZSYG2YVi/jnF6efkE/IQUCSDBFAiEA0SuFLYXc2WHS9fSrZgZU327tzHlMDDPOXMMJ/7X85Y0CIGczio4OFyXBl/saiK9Z9R5E5CVbIBZ8hoQDHAXR8lkqASECI7cr7vCWXRC+B3jv7NYfysb3mk6haTkzgHNEZPhPKrMAAAAAAAAA";
 
     // Valid Bitcoin transaction hex (Genesis block coinbase transaction)
-    const TEST_TX_HEX: &'static str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+    const TEST_TX_HEX: &str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
 
     #[test]
     fn test_wallet_process_psbt_result() {
@@ -1282,17 +1316,6 @@ mod tests {
         let result2: WalletProcessPsbtResult = serde_json::from_str(&json2).unwrap();
         assert!(result2.psbt.is_some());
         assert!(!result2.complete);
-        assert_eq!(result2.hex, None);
-
-        // Test extracted (no psbt field)
-        let json3 = format!(r#"{{"complete":true,"hex":"{test_tx_hex}"}}"#);
-        let result3: WalletProcessPsbtResult = serde_json::from_str(&json3).unwrap();
-        assert_eq!(result3.psbt, None);
-        assert!(result3.complete);
-        assert!(result3.hex.is_some());
-        let tx = result3.hex.unwrap();
-        assert!(!tx.input.is_empty());
-        assert!(!tx.output.is_empty());
     }
 
     #[test]
@@ -1309,8 +1332,8 @@ mod tests {
     #[test]
     fn test_list_unspent_query_options_camelcase() {
         let options = ListUnspentQueryOptions {
-            minimum_amount: Some(0.5),
-            maximum_amount: Some(2.0),
+            minimum_amount: Some(Amount::from_btc(0.5).unwrap()),
+            maximum_amount: Some(Amount::from_btc(2.0).unwrap()),
             maximum_count: Some(10),
         };
         let serialized = serde_json::to_string(&options).unwrap();

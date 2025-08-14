@@ -656,7 +656,7 @@ mod test {
     use bitcoin::{
         consensus::{self, encode::deserialize_hex},
         hashes::Hash,
-        transaction, Amount, NetworkKind,
+        transaction, Amount, FeeRate, NetworkKind,
     };
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -911,8 +911,8 @@ mod test {
         assert!(found_utxo);
 
         let query_options = ListUnspentQueryOptions {
-            minimum_amount: Some(0.5),
-            maximum_amount: Some(2.0),
+            minimum_amount: Some(Amount::from_btc(0.5).unwrap()),
+            maximum_amount: Some(Amount::from_btc(2.0).unwrap()),
             maximum_count: Some(10),
         };
         let utxos_with_query = client
@@ -1207,65 +1207,73 @@ mod test {
 
         let (bitcoind, client) = get_bitcoind_and_client();
 
-        // Mine blocks to have funds  
+        // Mine blocks to have funds
         mine_blocks(&bitcoind, 101, None).unwrap();
 
-        // Create a RBF-enabled transaction using bitcoind client with custom parameters
+        // Send to the next address
         let destination = client.get_new_address().await.unwrap();
-        
-        // Enable RBF for the wallet
-        bitcoind.client.set_wallet_flag("avoid_reuse", Some(false)).ok();
-        
-        // Create transaction with RBF enabled (sequence < 0xfffffffe)
+        let amount = Amount::from_btc(0.001).unwrap(); // 0.001 BTC
+
+        // Create transaction with RBF enabled
         let txid = bitcoind
             .client
-            .call::<String>(
-                "sendtoaddress", 
-                &[
-                    serde_json::Value::String(destination.to_string()),
-                    serde_json::Value::Number(serde_json::Number::from_f64(0.001).unwrap()), // 0.001 BTC
-                    serde_json::Value::String("".to_string()), // comment  
-                    serde_json::Value::String("".to_string()), // comment_to
-                    serde_json::Value::Bool(false), // subtractfeefromamount
-                    serde_json::Value::Bool(true),  // replaceable (RBF)
-                ]
-            )
+            .send_to_address_rbf(&destination, amount)
             .unwrap()
-            .parse::<Txid>()
+            .txid()
             .unwrap();
 
         // Verify transaction is in mempool (unconfirmed)
         let mempool = client.get_raw_mempool().await.unwrap();
-        assert!(mempool.contains(&txid), "Transaction should be in mempool for RBF");
+        assert!(
+            mempool.contains(&txid),
+            "Transaction should be in mempool for RBF"
+        );
 
         // Test psbt_bump_fee with default options
-        let bump_result = client.psbt_bump_fee(&txid, None).await.unwrap();
-
-        // Validate the result structure
-        assert!(!bump_result.psbt.inputs.is_empty(), "PSBT should have inputs");
-        assert!(bump_result.fee.to_sat() > 0, "New fee should be positive");
-        assert!(bump_result.origfee.to_sat() > 0, "Original fee should be positive");
-        assert!(
-            bump_result.fee > bump_result.origfee,
-            "New fee ({}) should be higher than original fee ({})",
-            bump_result.fee.to_sat(),
-            bump_result.origfee.to_sat()
+        let signed_tx = client
+            .psbt_bump_fee(&txid, None)
+            .await
+            .unwrap()
+            .psbt
+            .extract_tx()
+            .unwrap();
+        let signed_txid = signed_tx.compute_txid();
+        let got = client
+            .test_mempool_accept(&signed_tx)
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .txid;
+        assert_eq!(
+            got, signed_txid,
+            "Bumped transaction should be accepted in mempool"
         );
 
         // Test psbt_bump_fee with custom fee rate
         let options = PsbtBumpFeeOptions {
-            fee_rate: Some(20.0), // 20 sat/vB - higher than default
+            fee_rate: Some(FeeRate::from_sat_per_kwu(20)), // 20 sat/vB - higher than default
             ..Default::default()
         };
-        let bump_result_custom = client.psbt_bump_fee(&txid, Some(options)).await.unwrap();
-        
-        assert!(
-            bump_result_custom.fee.to_sat() >= bump_result.fee.to_sat(),
-            "Custom fee rate should result in equal or higher fee"
+        trace!(?options, "Calling psbt_bump_fee");
+        let signed_tx = client
+            .psbt_bump_fee(&txid, Some(options))
+            .await
+            .unwrap()
+            .psbt
+            .extract_tx()
+            .unwrap();
+        let signed_txid = signed_tx.compute_txid();
+        let got = client
+            .test_mempool_accept(&signed_tx)
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .txid;
+        assert_eq!(
+            got, signed_txid,
+            "Bumped transaction should be accepted in mempool"
         );
-        
-        // Verify PSBT structure 
-        assert!(!bump_result_custom.psbt.inputs.is_empty(), "Custom PSBT should have inputs");
-        assert!(!bump_result_custom.psbt.outputs.is_empty(), "Custom PSBT should have outputs");
     }
 }
