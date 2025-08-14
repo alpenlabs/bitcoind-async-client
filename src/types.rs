@@ -1062,14 +1062,18 @@ pub struct WalletCreateFundedPsbtOptions {
     ///
     /// If specified, this overrides the `conf_target` parameter for fee estimation.
     /// Must be a positive value representing the desired fee density.
-    #[serde(rename = "fee_rate")]
+    #[serde(default, rename = "fee_rate", skip_serializing_if = "Option::is_none")]
     pub fee_rate: Option<f64>,
 
     /// Whether to lock the selected UTXOs to prevent them from being spent by other transactions.
     ///
     /// When `true`, the wallet will temporarily lock the selected unspent outputs
     /// until the transaction is broadcast or manually unlocked. Default is `false`.
-    #[serde(rename = "lockUnspents")]
+    #[serde(
+        default,
+        rename = "lockUnspents",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub lock_unspents: Option<bool>,
 
     /// Target number of confirmations for automatic fee estimation.
@@ -1077,14 +1081,22 @@ pub struct WalletCreateFundedPsbtOptions {
     /// Represents the desired number of blocks within which the transaction should
     /// be confirmed. Higher values result in lower fees but longer confirmation times.
     /// Ignored if `fee_rate` is specified.
-    #[serde(rename = "conf_target")]
+    #[serde(
+        default,
+        rename = "conf_target",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub conf_target: Option<u16>,
 
     /// Whether the transaction should be BIP-125 opt-in Replace-By-Fee (RBF) enabled.
     ///
     /// When `true`, allows the transaction to be replaced with a higher-fee version
     /// before confirmation. Useful for fee bumping if the initial fee proves insufficient.
-    #[serde(rename = "replaceable")]
+    #[serde(
+        default,
+        rename = "replaceable",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub replaceable: Option<bool>,
 }
 

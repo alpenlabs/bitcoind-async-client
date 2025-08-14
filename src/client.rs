@@ -618,21 +618,6 @@ impl Signer for Client {
             .await
     }
 
-    async fn finalize_psbt(
-        &self,
-        psbt: &str,
-        extract: Option<bool>,
-    ) -> ClientResult<WalletProcessPsbtResult> {
-        let mut params = vec![to_value(psbt)?];
-
-        if let Some(extract) = extract {
-            params.push(to_value(extract)?);
-        }
-
-        self.call::<WalletProcessPsbtResult>("finalizepsbt", &params)
-            .await
-    }
-
     async fn psbt_bump_fee(
         &self,
         txid: &Txid,
@@ -859,14 +844,21 @@ mod test {
         assert!(processed_psbt.complete);
 
         let finalized_psbt = client
-            .finalize_psbt(
-                &processed_psbt.psbt.as_ref().unwrap().to_string(),
-                Some(true),
-            )
+            .wallet_process_psbt(&funded_psbt.psbt.to_string(), Some(true), None, None)
             .await
             .unwrap();
         assert!(finalized_psbt.complete);
         assert!(finalized_psbt.hex.is_some());
+        let signed_tx = finalized_psbt.hex.as_ref().unwrap();
+        let signed_txid = signed_tx.compute_txid();
+        let got = client
+            .test_mempool_accept(signed_tx)
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .txid;
+        assert_eq!(signed_txid, got);
 
         let info_address = client.get_new_address().await.unwrap();
         let address_info = client.get_address_info(&info_address).await.unwrap();

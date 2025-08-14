@@ -367,22 +367,6 @@ pub trait Signer {
         bip32_derivs: Option<bool>,
     ) -> impl Future<Output = ClientResult<WalletProcessPsbtResult>> + Send;
 
-    /// Finalizes a PSBT by filling in signatures and optionally extracting the complete transaction.
-    ///
-    /// # Parameters
-    ///
-    /// - `psbt`: The PSBT to finalize as a base64 string.
-    /// - `extract`: Whether to extract and return the complete transaction hex.
-    ///
-    /// # Returns
-    ///
-    /// Returns a [`WalletProcessPsbtResult`] with the finalized PSBT or extracted transaction.
-    fn finalize_psbt(
-        &self,
-        psbt: &str,
-        extract: Option<bool>,
-    ) -> impl Future<Output = ClientResult<WalletProcessPsbtResult>> + Send;
-
     /// Bumps the fee of an opt-in-RBF transaction, replacing it with a new transaction.
     ///
     /// # Parameters
