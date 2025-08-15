@@ -1,0 +1,12 @@
+[toolchain]
+channel = "1.85.0" # debian stable
+components = [
+  "cargo",
+  "clippy",
+  "rustc",
+  "rustfmt",
+  "rust-analyzer",
+  "rust-docs",
+  "rust-src",
+  "rust-std",
+]
