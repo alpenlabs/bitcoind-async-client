@@ -34,7 +34,7 @@ use crate::{
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
         GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetBlockchainInfo,
-        GetMempoolInfo, GetNewAddress, GetRawTransactionVerbosityOne,
+        GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
         GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
         ImportDescriptorResult, ListDescriptors, ListTransactions, ListUnspent,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
@@ -332,6 +332,11 @@ impl Reader for Client {
 
     async fn get_raw_mempool(&self) -> ClientResult<Vec<Txid>> {
         self.call::<Vec<Txid>>("getrawmempool", &[]).await
+    }
+
+    async fn get_raw_mempool_verbose(&self) -> ClientResult<GetRawMempoolVerbose> {
+        self.call::<GetRawMempoolVerbose>("getrawmempool", &[to_value(true)?])
+            .await
     }
 
     async fn get_mempool_info(&self) -> ClientResult<GetMempoolInfo> {
@@ -756,6 +761,11 @@ mod test {
         let got = client.get_raw_mempool().await.unwrap();
         let expected = vec![txid];
         assert_eq!(expected, got);
+
+        // get_raw_mempool_verbose
+        let got = client.get_raw_mempool_verbose().await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got.get(&txid).unwrap().height, 101);
 
         // get_mempool_info
         let got = client.get_mempool_info().await.unwrap();
