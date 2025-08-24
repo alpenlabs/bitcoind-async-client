@@ -5,13 +5,11 @@ pub mod corepc_node_helpers {
     use bitcoin::{Address, BlockHash};
     use corepc_node::Node;
 
-    use crate::Client;
+    use crate::{Auth, Client};
 
     /// Get the authentication credentials for a given `bitcoind` instance.
-    fn get_auth(bitcoind: &Node) -> (String, String) {
-        let params = &bitcoind.params;
-        let cookie_values = params.get_cookie_values().unwrap().unwrap();
-        (cookie_values.user, cookie_values.password)
+    fn get_auth(bitcoind: &Node) -> Auth {
+        Auth::CookieFile(bitcoind.params.cookie_file.clone())
     }
 
     /// Mine a number of blocks of a given size `count`, which may be specified to a given coinbase
@@ -43,8 +41,7 @@ pub mod corepc_node_helpers {
         let bitcoind = Node::from_downloaded().unwrap();
 
         let url = bitcoind.rpc_url();
-        let (user, password) = get_auth(&bitcoind);
-        let client = Client::new(url, user, password, None, None, None).unwrap();
+        let client = Client::new(url, get_auth(&bitcoind), None, None, None).unwrap();
         (bitcoind, client)
     }
 }
