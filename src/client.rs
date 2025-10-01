@@ -16,7 +16,7 @@ use bitcoin::{
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
 use corepc_types::model;
-use corepc_types::v29::{GetBlockHeaderVerbose, GetBlockchainInfo, ListTransactions};
+use corepc_types::v29::{GetBlockHeaderVerbose, GetBlockchainInfo, ListTransactions, GetTransaction};
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
@@ -36,7 +36,7 @@ use crate::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
         GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetMempoolInfo, GetNewAddress,
         GetRawMempoolVerbose, GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero,
-        GetTransaction, GetTxOut, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
+        GetTxOut, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
         ListUnspent, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
         PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, SubmitPackage,
         TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
@@ -439,9 +439,10 @@ impl Wallet for Client {
             .assume_checked();
         Ok(address_unchecked)
     }
-    async fn get_transaction(&self, txid: &Txid) -> ClientResult<GetTransaction> {
-        self.call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
-            .await
+    async fn get_transaction(&self, txid: &Txid) -> ClientResult<model::GetTransaction> {
+        let resp = self.call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
+            .await?;
+        resp.into_model().map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_utxos(&self) -> ClientResult<Vec<ListUnspent>> {
@@ -737,7 +738,7 @@ mod test {
             .unwrap();
 
         // get_transaction
-        let tx = client.get_transaction(&txid).await.unwrap().hex;
+        let tx = client.get_transaction(&txid).await.unwrap().tx;
         let got = client.send_raw_transaction(&tx).await.unwrap();
         let expected = txid; // Don't touch this!
         assert_eq!(expected, got);

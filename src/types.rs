@@ -4,40 +4,14 @@ use bitcoin::{
     address::{self, NetworkUnchecked},
     block::Header,
     consensus::{self, encode},
-    Address, Amount, Block, BlockHash, FeeRate, Psbt, SignedAmount, Transaction, Txid, Wtxid,
+    Address, Amount, Block, BlockHash, FeeRate, Psbt, Transaction, Txid, Wtxid,
 };
 use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use tracing::*;
 
 use crate::error::SignRawTransactionWithWalletError;
-
-/// The category of a transaction.
-///
-/// This is one of the results of `listtransactions` RPC method.
-///
-/// # Note
-///
-/// This is a subset of the categories available in Bitcoin Core.
-/// It also assumes that the transactions are present in the underlying Bitcoin
-/// client's wallet.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TransactionCategory {
-    /// Transactions sent.
-    Send,
-    /// Non-coinbase transactions received.
-    Receive,
-    /// Coinbase transactions received with more than 100 confirmations.
-    Generate,
-    /// Coinbase transactions received with 100 or less confirmations.
-    Immature,
-    /// Orphaned coinbase transactions received.
-    Orphan,
-}
-
 
 /// Result of JSON-RPC method `getblockheader` with verbosity set to 0.
 ///
@@ -388,23 +362,6 @@ pub struct SubmitPackageTxResultFees {
     pub effective_includes: Option<Vec<String>>,
 }
 
-/// Result of JSON-RPC method `gettxout`.
-///
-/// # Note
-///
-/// This assumes that the UTXOs are present in the underlying Bitcoin
-/// client's wallet.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct GetTransactionDetail {
-    pub address: String,
-    pub category: TransactionCategory,
-    pub amount: f64,
-    pub label: Option<String>,
-    pub vout: u32,
-    pub fee: Option<f64>,
-    pub abandoned: Option<bool>,
-}
-
 /// Result of the JSON-RPC method `getnewaddress`.
 ///
 /// # Note
@@ -419,60 +376,6 @@ impl GetNewAddress {
     pub fn address(self) -> Result<Address<NetworkUnchecked>, address::ParseError> {
         let address = self.0.parse::<Address<_>>()?;
         Ok(address)
-    }
-}
-
-/// Models the result of JSON-RPC method `listunspent`.
-///
-/// # Note
-///
-/// This assumes that the UTXOs are present in the underlying Bitcoin
-/// client's wallet.
-///
-/// Careful with the amount field. It is a [`SignedAmount`], hence can be negative.
-/// Negative amounts for the [`TransactionCategory::Send`], and is positive
-/// for all other categories.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct GetTransaction {
-    /// The signed amount in BTC.
-    #[serde(deserialize_with = "deserialize_signed_bitcoin")]
-    pub amount: SignedAmount,
-    /// The signed fee in BTC.
-    pub confirmations: u64,
-    pub generated: Option<bool>,
-    pub trusted: Option<bool>,
-    pub blockhash: Option<String>,
-    pub blockheight: Option<u64>,
-    pub blockindex: Option<u32>,
-    pub blocktime: Option<u64>,
-    /// The transaction id.
-    #[serde(deserialize_with = "deserialize_txid")]
-    pub txid: Txid,
-    pub wtxid: String,
-    pub walletconflicts: Vec<String>,
-    pub replaced_by_txid: Option<String>,
-    pub replaces_txid: Option<String>,
-    pub comment: Option<String>,
-    pub to: Option<String>,
-    pub time: u64,
-    pub timereceived: u64,
-    #[serde(rename = "bip125-replaceable")]
-    pub bip125_replaceable: String,
-    pub details: Vec<GetTransactionDetail>,
-    /// The transaction itself.
-    #[serde(deserialize_with = "deserialize_tx")]
-    pub hex: Transaction,
-}
-
-impl GetTransaction {
-    pub fn block_height(&self) -> u64 {
-        if self.confirmations == 0 {
-            return 0;
-        }
-        self.blockheight.unwrap_or_else(|| {
-            warn!("Txn confirmed but did not obtain blockheight. Setting height to zero");
-            0
-        })
     }
 }
 
@@ -699,31 +602,6 @@ where
         }
     }
     deserializer.deserialize_any(FeeRateVisitor)
-}
-
-/// Deserializes the *signed* amount in BTC into proper [`SignedAmount`]s.
-fn deserialize_signed_bitcoin<'d, D>(deserializer: D) -> Result<SignedAmount, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    struct SatVisitor;
-
-    impl Visitor<'_> for SatVisitor {
-        type Value = SignedAmount;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a float representation of btc values expected")
-        }
-
-        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let signed_amount = SignedAmount::from_btc(v).expect("Amount deserialization failed");
-            Ok(signed_amount)
-        }
-    }
-    deserializer.deserialize_any(SatVisitor)
 }
 
 /// Deserializes the transaction id string into proper [`Txid`]s.
