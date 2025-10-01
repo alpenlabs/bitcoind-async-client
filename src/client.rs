@@ -15,6 +15,7 @@ use bitcoin::{
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
+use corepc_types::v28::ListTransactions;
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
@@ -36,10 +37,10 @@ use crate::{
         GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetBlockchainInfo,
         GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
         GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListDescriptors, ListTransactions, ListUnspent,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        ImportDescriptorResult, ListDescriptors, ListUnspent, ListUnspentQueryOptions,
+        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
+        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -448,8 +449,8 @@ impl Wallet for Client {
         Ok(resp)
     }
 
-    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<Vec<ListTransactions>> {
-        self.call::<Vec<ListTransactions>>("listtransactions", &[to_value(count)?])
+    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<ListTransactions> {
+        self.call::<ListTransactions>("listtransactions", &[to_value(count)?])
             .await
     }
 
@@ -804,7 +805,7 @@ mod test {
 
         // list_transactions
         let got = client.list_transactions(None).await.unwrap();
-        assert_eq!(got.len(), 10);
+        assert_eq!(got.0.len(), 10);
 
         // list_unspent
         // let's mine one more block

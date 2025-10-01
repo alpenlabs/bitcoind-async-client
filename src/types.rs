@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
 
 use bitcoin::{
-    absolute::Height,
     address::{self, NetworkUnchecked},
     block::Header,
     consensus::{self, encode},
     Address, Amount, Block, BlockHash, FeeRate, Psbt, SignedAmount, Transaction, Txid, Wtxid,
 };
 use serde::{
-    de::{self, IntoDeserializer, Visitor},
+    de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use tracing::*;
@@ -440,23 +439,12 @@ pub struct SubmitPackageTxResultFees {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct GetTransactionDetail {
     pub address: String,
-    pub category: GetTransactionDetailCategory,
+    pub category: TransactionCategory,
     pub amount: f64,
     pub label: Option<String>,
     pub vout: u32,
     pub fee: Option<f64>,
     pub abandoned: Option<bool>,
-}
-
-/// Enum to represent the category of a transaction.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GetTransactionDetailCategory {
-    Send,
-    Receive,
-    Generate,
-    Immature,
-    Orphan,
 }
 
 /// Result of the JSON-RPC method `getnewaddress`.
@@ -565,41 +553,6 @@ pub struct ListUnspent {
     /// transactions are considered unsafe and are not eligible for spending by
     /// `fundrawtransaction` and `sendtoaddress`.
     pub safe: bool,
-}
-
-/// Models the result of JSON-RPC method `listtransactions`.
-///
-/// # Note
-///
-/// This assumes that the transactions are present in the underlying Bitcoin
-/// client's wallet.
-///
-/// Careful with the amount field. It is a [`SignedAmount`], hence can be negative.
-/// Negative amounts for the [`TransactionCategory::Send`], and is positive
-/// for all other categories.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct ListTransactions {
-    /// The Bitcoin address.
-    #[serde(deserialize_with = "deserialize_address")]
-    pub address: Address<NetworkUnchecked>,
-    /// Category of the transaction.
-    category: TransactionCategory,
-    /// The signed amount in BTC.
-    #[serde(deserialize_with = "deserialize_signed_bitcoin")]
-    pub amount: SignedAmount,
-    /// The label associated with the address, if any.
-    pub label: Option<String>,
-    /// The number of confirmations.
-    pub confirmations: u32,
-    pub trusted: Option<bool>,
-    pub generated: Option<bool>,
-    pub blockhash: Option<String>,
-    pub blockheight: Option<u64>,
-    pub blockindex: Option<u32>,
-    pub blocktime: Option<u64>,
-    /// The transaction id.
-    #[serde(deserialize_with = "deserialize_txid")]
-    pub txid: Txid,
 }
 
 /// Models the result of JSON-RPC method `testmempoolaccept`.
@@ -815,21 +768,6 @@ where
     deserializer.deserialize_any(SatVisitor)
 }
 
-/// Deserializes the *signed* amount in BTC into proper [`SignedAmount`]s.
-#[expect(dead_code)]
-fn deserialize_signed_bitcoin_option<'d, D>(
-    deserializer: D,
-) -> Result<Option<SignedAmount>, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    let f: Option<f64> = Option::deserialize(deserializer)?;
-    match f {
-        Some(v) => deserialize_signed_bitcoin(v.into_deserializer()).map(Some),
-        None => Ok(None),
-    }
-}
-
 /// Deserializes the transaction id string into proper [`Txid`]s.
 fn deserialize_txid<'d, D>(deserializer: D) -> Result<Txid, D::Error>
 where
@@ -972,59 +910,6 @@ where
         }
     }
     deserializer.deserialize_any(AddressVisitor)
-}
-
-/// Deserializes the blockhash string into proper [`BlockHash`]s.
-#[expect(dead_code)]
-fn deserialize_blockhash<'d, D>(deserializer: D) -> Result<BlockHash, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    struct BlockHashVisitor;
-
-    impl Visitor<'_> for BlockHashVisitor {
-        type Value = BlockHash;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a blockhash string expected")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let blockhash = consensus::encode::deserialize_hex::<BlockHash>(v)
-                .expect("BlockHash deserialization failed");
-            Ok(blockhash)
-        }
-    }
-    deserializer.deserialize_any(BlockHashVisitor)
-}
-
-/// Deserializes the height string into proper [`Height`]s.
-#[expect(dead_code)]
-fn deserialize_height<'d, D>(deserializer: D) -> Result<Height, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    struct HeightVisitor;
-
-    impl Visitor<'_> for HeightVisitor {
-        type Value = Height;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a height u32 string expected")
-        }
-
-        fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let height = Height::from_consensus(v).expect("Height deserialization failed");
-            Ok(height)
-        }
-    }
-    deserializer.deserialize_any(HeightVisitor)
 }
 
 /// Signature hash types for Bitcoin transactions.

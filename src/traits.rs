@@ -1,4 +1,5 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
+use corepc_types::v28::ListTransactions;
 use std::future::Future;
 
 use crate::{
@@ -7,10 +8,10 @@ use crate::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
         GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempoolVerbose,
         GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero, GetTransaction, GetTxOut,
-        ImportDescriptor, ImportDescriptorResult, ListTransactions, ListUnspent,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        ImportDescriptor, ImportDescriptorResult, ListUnspent, ListUnspentQueryOptions,
+        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SignRawTransactionWithWallet,
+        SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
+        WalletProcessPsbtResult,
     },
 };
 
@@ -211,7 +212,7 @@ pub trait Wallet {
     fn list_transactions(
         &self,
         count: Option<usize>,
-    ) -> impl Future<Output = ClientResult<Vec<ListTransactions>>> + Send;
+    ) -> impl Future<Output = ClientResult<ListTransactions>> + Send;
 
     /// Lists all wallets in the underlying Bitcoin client.
     fn list_wallets(&self) -> impl Future<Output = ClientResult<Vec<String>>> + Send;
