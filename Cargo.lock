@@ -170,6 +170,7 @@ dependencies = [
  "base64 0.22.1",
  "bitcoin",
  "corepc-node",
+ "corepc-types",
  "hex-conservative",
  "reqwest",
  "secp256k1",
