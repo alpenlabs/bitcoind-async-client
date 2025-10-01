@@ -15,7 +15,8 @@ use bitcoin::{
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
-use corepc_types::v28::ListTransactions;
+use corepc_types::model;
+use corepc_types::v29::{GetBlockHeaderVerbose, GetBlockchainInfo, ListTransactions};
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
@@ -28,19 +29,18 @@ use serde_json::{
 use tokio::time::sleep;
 use tracing::*;
 
-use super::types::GetBlockHeaderVerbosityZero;
 use crate::{
     error::{BitcoinRpcError, ClientError},
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetBlockchainInfo,
-        GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
-        GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListDescriptors, ListUnspent, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
-        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetMempoolInfo, GetNewAddress,
+        GetRawMempoolVerbose, GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero,
+        GetTransaction, GetTxOut, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
+        ListUnspent, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
+        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, SubmitPackage,
+        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
+        WalletProcessPsbtResult,
     },
 };
 
@@ -271,13 +271,13 @@ impl Reader for Client {
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
         let get_block_header = self
-            .call::<GetBlockHeaderVerbosityZero>(
+            .call::<GetBlockHeaderVerbose>(
                 "getblockheader",
                 &[to_value(hash.to_string())?, to_value(false)?],
             )
             .await?;
         let header = get_block_header
-            .header()
+            .block_header()
             .map_err(|err| ClientError::Other(format!("header decode: {err}")))?;
         Ok(header)
     }
@@ -320,9 +320,10 @@ impl Reader for Client {
             .await
     }
 
-    async fn get_blockchain_info(&self) -> ClientResult<GetBlockchainInfo> {
-        self.call::<GetBlockchainInfo>("getblockchaininfo", &[])
-            .await
+    async fn get_blockchain_info(&self) -> ClientResult<model::GetBlockchainInfo> {
+        let res = self.call::<GetBlockchainInfo>("getblockchaininfo", &[])
+            .await?;
+        res.into_model().map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_current_timestamp(&self) -> ClientResult<u32> {
@@ -449,9 +450,10 @@ impl Wallet for Client {
         Ok(resp)
     }
 
-    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<ListTransactions> {
-        self.call::<ListTransactions>("listtransactions", &[to_value(count)?])
-            .await
+    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<model::ListTransactions> {
+        let resp = self.call::<ListTransactions>("listtransactions", &[to_value(count)?])
+            .await?;
+        resp.into_model().map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn list_wallets(&self) -> ClientResult<Vec<String>> {
