@@ -16,7 +16,9 @@ use bitcoin::{
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
 use corepc_types::model;
-use corepc_types::v29::{GetBlockHeaderVerbose, GetBlockchainInfo, ListTransactions, GetTransaction};
+use corepc_types::v29::{
+    GetBlockHeaderVerbose, GetBlockchainInfo, GetTransaction, ListTransactions,
+};
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
@@ -37,10 +39,9 @@ use crate::{
         GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetMempoolInfo, GetNewAddress,
         GetRawMempoolVerbose, GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero,
         GetTxOut, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
-        ListUnspent, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
-        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, SubmitPackage,
-        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
-        WalletProcessPsbtResult,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -321,9 +322,11 @@ impl Reader for Client {
     }
 
     async fn get_blockchain_info(&self) -> ClientResult<model::GetBlockchainInfo> {
-        let res = self.call::<GetBlockchainInfo>("getblockchaininfo", &[])
+        let res = self
+            .call::<GetBlockchainInfo>("getblockchaininfo", &[])
             .await?;
-        res.into_model().map_err(|e| ClientError::Parse(e.to_string()))
+        res.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_current_timestamp(&self) -> ClientResult<u32> {
@@ -440,21 +443,22 @@ impl Wallet for Client {
         Ok(address_unchecked)
     }
     async fn get_transaction(&self, txid: &Txid) -> ClientResult<model::GetTransaction> {
-        let resp = self.call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
+        let resp = self
+            .call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
             .await?;
-        resp.into_model().map_err(|e| ClientError::Parse(e.to_string()))
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_utxos(&self) -> ClientResult<Vec<ListUnspent>> {
-        let resp = self.call::<Vec<ListUnspent>>("listunspent", &[]).await?;
-        trace!(?resp, "Got UTXOs");
-        Ok(resp)
-    }
-
-    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<model::ListTransactions> {
-        let resp = self.call::<ListTransactions>("listtransactions", &[to_value(count)?])
+    async fn list_transactions(
+        &self,
+        count: Option<usize>,
+    ) -> ClientResult<model::ListTransactions> {
+        let resp = self
+            .call::<ListTransactions>("listtransactions", &[to_value(count)?])
             .await?;
-        resp.into_model().map_err(|e| ClientError::Parse(e.to_string()))
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn list_wallets(&self) -> ClientResult<Vec<String>> {
@@ -510,7 +514,7 @@ impl Wallet for Client {
         addresses: Option<&[Address]>,
         include_unsafe: Option<bool>,
         query_options: Option<ListUnspentQueryOptions>,
-    ) -> ClientResult<Vec<ListUnspent>> {
+    ) -> ClientResult<model::ListUnspent> {
         let addr_strings: Vec<String> = addresses
             .map(|addrs| addrs.iter().map(|a| a.to_string()).collect())
             .unwrap_or_default();
@@ -526,7 +530,41 @@ impl Wallet for Client {
             params.push(to_value(query_options)?);
         }
 
-        self.call::<Vec<ListUnspent>>("listunspent", &params).await
+        let resp = self
+            .call::<serde_json::Value>("listunspent", &params)
+            .await?;
+        trace!(?resp, "Got UTXOs");
+        let mut utxos: Vec<serde_json::Value> =
+            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        // FIXME(corepc-types): Transform field names in each UTXO
+        for utxo in &mut utxos {
+            if let Some(utxo_map) = utxo.as_object_mut() {
+                // Rename scriptPubKey to script_pubkey
+                if let Some(script_pubkey) = utxo_map.remove("scriptPubKey") {
+                    utxo_map.insert("script_pubkey".to_string(), script_pubkey);
+                }
+
+                // Rename desc to descriptor
+                if let Some(desc) = utxo_map.remove("desc") {
+                    utxo_map.insert("descriptor".to_string(), desc);
+                }
+
+                // Add missing label field if not present
+                if !utxo_map.contains_key("label") {
+                    utxo_map.insert(
+                        "label".to_string(),
+                        serde_json::Value::String(String::new()),
+                    );
+                }
+            }
+        }
+
+        let list_unspent: model::ListUnspent =
+            serde_json::from_value(serde_json::Value::Array(utxos))
+                .map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        Ok(list_unspent)
     }
 }
 
@@ -817,7 +855,7 @@ mod test {
             .list_unspent(None, None, None, None, None)
             .await
             .unwrap();
-        assert_eq!(got.len(), 3);
+        assert_eq!(got.0.len(), 3);
 
         // listdescriptors
         let got = client.get_xpriv().await.unwrap().unwrap().network;
@@ -900,7 +938,7 @@ mod test {
             .list_unspent(Some(1), Some(9_999_999), None, Some(true), None)
             .await
             .unwrap();
-        assert!(!utxos.is_empty());
+        assert!(!utxos.0.is_empty());
 
         let utxos_filtered = client
             .list_unspent(
@@ -912,8 +950,8 @@ mod test {
             )
             .await
             .unwrap();
-        assert!(!utxos_filtered.is_empty());
-        let found_utxo = utxos_filtered.iter().any(|utxo| {
+        assert!(!utxos_filtered.0.is_empty());
+        let found_utxo = utxos_filtered.0.iter().any(|utxo| {
             utxo.txid.to_string() == unspent_txid
                 && utxo.address.clone().assume_checked().to_string() == unspent_address.to_string()
         });
@@ -934,8 +972,8 @@ mod test {
             )
             .await
             .unwrap();
-        assert!(!utxos_with_query.is_empty());
-        for utxo in &utxos_with_query {
+        assert!(!utxos_with_query.0.is_empty());
+        for utxo in &utxos_with_query.0 {
             let amount_btc = utxo.amount.to_btc();
             assert!((0.5..=2.0).contains(&amount_btc));
         }

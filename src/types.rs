@@ -379,43 +379,6 @@ impl GetNewAddress {
     }
 }
 
-/// Models the result of JSON-RPC method `listunspent`.
-///
-/// # Note
-///
-/// This assumes that the UTXOs are present in the underlying Bitcoin
-/// client's wallet.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ListUnspent {
-    /// The transaction id.
-    #[serde(deserialize_with = "deserialize_txid")]
-    pub txid: Txid,
-    /// The vout value.
-    pub vout: u32,
-    /// The Bitcoin address.
-    #[serde(deserialize_with = "deserialize_address")]
-    pub address: Address<NetworkUnchecked>,
-    // The associated label, if any.
-    pub label: Option<String>,
-    /// The script pubkey.
-    #[serde(rename = "scriptPubKey")]
-    pub script_pubkey: String,
-    /// The transaction output amount in BTC.
-    #[serde(deserialize_with = "deserialize_bitcoin")]
-    pub amount: Amount,
-    /// The number of confirmations.
-    pub confirmations: u32,
-    /// Whether we have the private keys to spend this output.
-    pub spendable: bool,
-    /// Whether we know how to spend this output, ignoring the lack of keys.
-    pub solvable: bool,
-    /// Whether this output is considered safe to spend.
-    /// Unconfirmed transactions from outside keys and unconfirmed replacement
-    /// transactions are considered unsafe and are not eligible for spending by
-    /// `fundrawtransaction` and `sendtoaddress`.
-    pub safe: bool,
-}
-
 /// Models the result of JSON-RPC method `testmempoolaccept`.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct TestMempoolAccept {

@@ -1,5 +1,5 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
-use corepc_types::model::{GetBlockchainInfo, GetTransaction, ListTransactions};
+use corepc_types::model::{GetBlockchainInfo, GetTransaction, ListTransactions, ListUnspent};
 use std::future::Future;
 
 use crate::{
@@ -8,9 +8,9 @@ use crate::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
         GetAddressInfo, GetMempoolInfo, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
         GetRawTransactionVerbosityZero, GetTxOut, ImportDescriptor, ImportDescriptorResult,
-        ListUnspent, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
-        PsbtBumpFeeOptions, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -194,14 +194,6 @@ pub trait Wallet {
         txid: &Txid,
     ) -> impl Future<Output = ClientResult<GetTransaction>> + Send;
 
-    /// Gets all Unspent Transaction Outputs (UTXOs) for the underlying Bitcoin
-    /// client's wallet.
-    #[deprecated(
-        since = "0.4.0",
-        note = "Does not adhere with bitcoin core RPC naming. Use `list_unspent` instead"
-    )]
-    fn get_utxos(&self) -> impl Future<Output = ClientResult<Vec<ListUnspent>>> + Send;
-
     /// Lists transactions in the underlying Bitcoin client's wallet.
     ///
     /// # Parameters
@@ -318,7 +310,7 @@ pub trait Wallet {
         addresses: Option<&[Address]>,
         include_unsafe: Option<bool>,
         query_options: Option<ListUnspentQueryOptions>,
-    ) -> impl Future<Output = ClientResult<Vec<ListUnspent>>> + Send;
+    ) -> impl Future<Output = ClientResult<ListUnspent>> + Send;
 }
 
 /// Signing functionality that any Bitcoin client **with private keys** that
