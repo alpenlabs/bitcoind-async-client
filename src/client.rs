@@ -19,7 +19,7 @@ use corepc_types::model;
 use corepc_types::v29::{
     GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
     GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
-    GetRawTransactionVerbose, GetTransaction, ListTransactions,
+    GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -38,11 +38,10 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetNewAddress, GetTxOut, ImportDescriptor, ImportDescriptorResult,
-        ListDescriptors, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
-        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, SubmitPackage,
-        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
-        WalletProcessPsbtResult,
+        GetAddressInfo, GetNewAddress, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -436,16 +435,20 @@ impl Reader for Client {
         txid: &Txid,
         vout: u32,
         include_mempool: bool,
-    ) -> ClientResult<GetTxOut> {
-        self.call::<GetTxOut>(
-            "gettxout",
-            &[
-                to_value(txid.to_string())?,
-                to_value(vout)?,
-                to_value(include_mempool)?,
-            ],
-        )
-        .await
+    ) -> ClientResult<model::GetTxOut> {
+        let resp = self
+            .call::<GetTxOut>(
+                "gettxout",
+                &[
+                    to_value(txid.to_string())?,
+                    to_value(vout)?,
+                    to_value(include_mempool)?,
+                ],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn network(&self) -> ClientResult<Network> {
@@ -1065,7 +1068,7 @@ mod test {
             .get_tx_out(&coinbase_tx.compute_txid(), 0, true)
             .await
             .unwrap();
-        assert_eq!(got.value, COINBASE_AMOUNT.to_btc());
+        assert_eq!(got.tx_out.value, COINBASE_AMOUNT);
 
         // gettxout should fail with a spent UTXO.
         let new_address = bitcoind.client.new_address().unwrap();
