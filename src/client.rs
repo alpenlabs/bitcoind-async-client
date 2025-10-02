@@ -15,7 +15,6 @@ use bitcoin::{
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
-use corepc_types::model;
 use corepc_types::v29::{
     GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
@@ -23,6 +22,7 @@ use corepc_types::v29::{
     ListDescriptors, ListTransactions, SignRawTransactionWithWallet, SubmitPackage,
     TestMempoolAccept,
 };
+use corepc_types::{model, v29::CreateWallet};
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
     Client as ReqwestClient,
@@ -40,9 +40,9 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        CreateWallet, ImportDescriptorInput, ListUnspentQueryOptions, PreviousTransactionOutput,
-        PsbtBumpFee, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
+        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -747,19 +747,19 @@ impl Signer for Client {
         descriptors: Vec<ImportDescriptorInput>,
         wallet_name: String,
     ) -> ClientResult<ImportDescriptors> {
-        let wallet_args = CreateWallet {
-            wallet_name,
+        let wallet_args = CreateWalletArguments {
+            name: wallet_name,
             load_on_startup: Some(true),
         };
 
         // TODO: this should check for -35 error code which is good,
         //       means that is already created
         let _wallet_create = self
-            .call::<Value>("createwallet", &[to_value(wallet_args.clone())?])
+            .call::<CreateWallet>("createwallet", &[to_value(wallet_args.clone())?])
             .await;
         // TODO: this should check for -35 error code which is good, -18 is bad.
         let _wallet_load = self
-            .call::<Value>("loadwallet", &[to_value(wallet_args)?])
+            .call::<CreateWallet>("loadwallet", &[to_value(wallet_args)?])
             .await;
 
         let result = self

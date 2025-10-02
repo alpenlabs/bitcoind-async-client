@@ -129,9 +129,9 @@ pub struct ImportDescriptorInput {
 ///
 /// This can also be used for the `loadwallet` JSON-RPC method.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct CreateWallet {
+pub struct CreateWalletArguments {
     /// Wallet name
-    pub wallet_name: String,
+    pub name: String,
     /// Load on startup
     pub load_on_startup: Option<bool>,
 }
