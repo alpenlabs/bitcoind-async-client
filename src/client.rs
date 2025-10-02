@@ -18,7 +18,8 @@ use bitcoin::{
 use corepc_types::model;
 use corepc_types::v29::{
     GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
-    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, ListTransactions,
+    GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
+    GetRawTransactionVerbose, GetTransaction, ListTransactions,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -37,11 +38,11 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetTxOut,
-        ImportDescriptor, ImportDescriptorResult, ListDescriptors, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
-        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        GetAddressInfo, GetNewAddress, GetTxOut, ImportDescriptor, ImportDescriptorResult,
+        ListDescriptors, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
+        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, SubmitPackage,
+        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
+        WalletProcessPsbtResult,
     },
 };
 
@@ -336,17 +337,68 @@ impl Reader for Client {
         Ok(block.header.time)
     }
 
-    async fn get_raw_mempool(&self) -> ClientResult<Vec<Txid>> {
-        self.call::<Vec<Txid>>("getrawmempool", &[]).await
+    async fn get_raw_mempool(&self) -> ClientResult<model::GetRawMempool> {
+        let resp = self.call::<GetRawMempool>("getrawmempool", &[]).await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_raw_mempool_verbose(&self) -> ClientResult<GetRawMempoolVerbose> {
-        self.call::<GetRawMempoolVerbose>("getrawmempool", &[to_value(true)?])
-            .await
+    async fn get_raw_mempool_verbose(&self) -> ClientResult<model::GetRawMempoolVerbose> {
+        let resp = self
+            .call::<serde_json::Value>("getrawmempool", &[to_value(true)?])
+            .await?;
+        trace!(?resp, "Got raw mempool verbose");
+
+        let mut mempool_map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        // FIXME(corepc-types): Transform field names in each mempool entry
+        for (_txid, entry) in &mut mempool_map {
+            if let Some(entry_map) = entry.as_object_mut() {
+                // Rename vsize to size
+                if let Some(vsize) = entry_map.remove("vsize") {
+                    entry_map.insert("size".to_string(), vsize);
+                }
+
+                // Flatten fees object: fees.base -> fee, fees.modified -> modifiedfee, etc.
+                // Keep the fees object too, as model might need both
+                if let Some(fees_obj) = entry_map.get("fees").cloned() {
+                    if let Some(fees_map) = fees_obj.as_object() {
+                        if let Some(base) = fees_map.get("base") {
+                            entry_map.insert("fee".to_string(), base.clone());
+                        }
+                        if let Some(modified) = fees_map.get("modified") {
+                            entry_map.insert("modifiedfee".to_string(), modified.clone());
+                        }
+                        if let Some(ancestor) = fees_map.get("ancestor") {
+                            entry_map.insert("ancestorfees".to_string(), ancestor.clone());
+                        }
+                        if let Some(descendant) = fees_map.get("descendant") {
+                            entry_map.insert("descendantfees".to_string(), descendant.clone());
+                        }
+                    }
+                }
+
+                // Remove fields not expected by model
+                entry_map.remove("bip125-replaceable");
+                entry_map.remove("unbroadcast");
+                entry_map.remove("weight");
+            }
+        }
+
+        let mempool_verbose: GetRawMempoolVerbose =
+            serde_json::from_value(serde_json::Value::Object(mempool_map))
+                .map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        mempool_verbose
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_mempool_info(&self) -> ClientResult<GetMempoolInfo> {
-        self.call::<GetMempoolInfo>("getmempoolinfo", &[]).await
+    async fn get_mempool_info(&self) -> ClientResult<model::GetMempoolInfo> {
+        let resp = self.call::<GetMempoolInfo>("getmempoolinfo", &[]).await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_raw_transaction_verbosity_zero(
@@ -811,18 +863,18 @@ mod test {
         // get_raw_mempool
         let got = client.get_raw_mempool().await.unwrap();
         let expected = vec![txid];
-        assert_eq!(expected, got);
+        assert_eq!(expected, got.0);
 
         // get_raw_mempool_verbose
         let got = client.get_raw_mempool_verbose().await.unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got.get(&txid).unwrap().height, 101);
+        assert_eq!(got.0.len(), 1);
+        assert_eq!(got.0.get(&txid).unwrap().height, 101);
 
         // get_mempool_info
         let got = client.get_mempool_info().await.unwrap();
-        assert!(got.loaded);
+        assert!(got.loaded.unwrap_or(false));
         assert_eq!(got.size, 1);
-        assert_eq!(got.unbroadcastcount, 1);
+        assert_eq!(got.unbroadcast_count, Some(1));
 
         // estimate_smart_fee
         let got = client.estimate_smart_fee(1).await.unwrap();
@@ -1281,7 +1333,7 @@ mod test {
         // Verify transaction is in mempool (unconfirmed)
         let mempool = client.get_raw_mempool().await.unwrap();
         assert!(
-            mempool.contains(&txid),
+            mempool.0.contains(&txid),
             "Transaction should be in mempool for RBF"
         );
 

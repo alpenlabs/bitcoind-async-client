@@ -1,7 +1,7 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
 use corepc_types::model::{
-    GetBlockchainInfo, GetRawTransaction, GetRawTransactionVerbose, GetTransaction,
-    ListTransactions, ListUnspent,
+    GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
+    GetRawTransactionVerbose, GetTransaction, ListTransactions, ListUnspent,
 };
 use std::future::Future;
 
@@ -9,10 +9,10 @@ use crate::{
     client::ClientResult,
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
-        GetAddressInfo, GetMempoolInfo, GetRawMempoolVerbose, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
-        PsbtBumpFeeOptions, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        GetAddressInfo, GetTxOut, ImportDescriptor, ImportDescriptorResult,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -88,7 +88,7 @@ pub trait Reader {
     fn get_current_timestamp(&self) -> impl Future<Output = ClientResult<u32>> + Send;
 
     /// Gets all transaction ids in mempool.
-    fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<Vec<Txid>>> + Send;
+    fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<GetRawMempool>> + Send;
 
     /// Gets verbose representation of transactions in mempool.
     fn get_raw_mempool_verbose(
