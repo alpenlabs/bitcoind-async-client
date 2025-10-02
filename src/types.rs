@@ -1,7 +1,6 @@
 use bitcoin::{
-    address::{self, NetworkUnchecked},
     consensus::{self},
-    Address, Amount, FeeRate, Psbt, Transaction, Txid,
+    Amount, FeeRate, Psbt, Transaction, Txid,
 };
 use serde::{
     de::{self, Visitor},
@@ -70,23 +69,6 @@ impl Serialize for CreateRawTransactionOutput {
                 map.serialize(serializer)
             }
         }
-    }
-}
-
-/// Result of the JSON-RPC method `getnewaddress`.
-///
-/// # Note
-///
-/// This assumes that the UTXOs are present in the underlying Bitcoin
-/// client's wallet.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct GetNewAddress(pub String);
-
-impl GetNewAddress {
-    /// Converts json straight to a [`Address`].
-    pub fn address(self) -> Result<Address<NetworkUnchecked>, address::ParseError> {
-        let address = self.0.parse::<Address<_>>()?;
-        Ok(address)
     }
 }
 
@@ -367,35 +349,6 @@ where
     }
 }
 
-/// Deserializes the address string into proper [`Address`]s.
-///
-/// # Note
-///
-/// The user is responsible for ensuring that the address is valid,
-/// since this functions returns an [`Address<NetworkUnchecked>`].
-fn deserialize_address<'d, D>(deserializer: D) -> Result<Address<NetworkUnchecked>, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    struct AddressVisitor;
-    impl Visitor<'_> for AddressVisitor {
-        type Value = Address<NetworkUnchecked>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a Bitcoin address string expected")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            v.parse::<Address<_>>()
-                .map_err(|e| E::custom(format!("failed to deserialize address: {e}")))
-        }
-    }
-    deserializer.deserialize_any(AddressVisitor)
-}
-
 /// Signature hash types for Bitcoin transactions.
 ///
 /// These types specify which parts of a transaction are included in the signature
@@ -578,47 +531,6 @@ pub struct WalletProcessPsbtResult {
         default
     )]
     pub hex: Option<Transaction>,
-}
-
-/// Result of the `getaddressinfo` RPC method.
-///
-/// Provides detailed information about a Bitcoin address, including ownership
-/// status, watching capabilities, and spending permissions within the wallet.
-///
-/// # Note
-///
-/// Optional fields may be `None` if the wallet doesn't have specific information
-/// about the address or if the address is not related to the wallet.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct GetAddressInfo {
-    /// The Bitcoin address that was queried.
-    ///
-    /// Returns the same address that was provided as input to `getaddressinfo`,
-    /// validated and parsed into the proper Address type.
-    #[serde(deserialize_with = "deserialize_address")]
-    pub address: Address<NetworkUnchecked>,
-
-    /// Whether the address belongs to the wallet (can receive payments to it).
-    ///
-    /// `true` if the wallet owns the private key or can generate signatures for this address.
-    /// `false` if the address is not owned by the wallet. `None` if ownership status is unknown.
-    #[serde(rename = "ismine")]
-    pub is_mine: Option<bool>,
-
-    /// Whether the address is watch-only (monitored but not spendable).
-    ///
-    /// `true` if the wallet watches this address for incoming transactions but cannot
-    /// spend from it (no private key). `false` if the address is fully controlled.
-    /// `None` if watch status is not applicable.
-    #[serde(rename = "iswatchonly")]
-    pub is_watchonly: Option<bool>,
-
-    /// Whether the wallet knows how to spend coins sent to this address.
-    ///
-    /// `true` if the wallet has enough information (private keys, scripts) to create
-    /// valid spending transactions from this address. `false` if the address cannot
-    /// be spent by this wallet. `None` if spendability cannot be determined.
-    pub solvable: Option<bool>,
 }
 
 /// Query options for filtering unspent transaction outputs.

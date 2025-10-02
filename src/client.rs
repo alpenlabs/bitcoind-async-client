@@ -17,9 +17,10 @@ use bitcoin::{
 };
 use corepc_types::model;
 use corepc_types::v29::{
-    GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
-    GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
-    GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions, SubmitPackage,
+    GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
+    GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
+    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
+    SubmitPackage,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -38,10 +39,10 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        CreateWallet, GetAddressInfo, GetNewAddress, ImportDescriptor, ImportDescriptorResult,
-        ListDescriptors, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
-        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        CreateWallet, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        SighashType, SignRawTransactionWithWallet, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -609,10 +610,14 @@ impl Wallet for Client {
         .await
     }
 
-    async fn get_address_info(&self, address: &Address) -> ClientResult<GetAddressInfo> {
+    async fn get_address_info(&self, address: &Address) -> ClientResult<model::GetAddressInfo> {
         trace!(address = %address, "Getting address info");
-        self.call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
-            .await
+        let resp = self
+            .call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
+            .await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 
     async fn list_unspent(
@@ -1026,7 +1031,7 @@ mod test {
         let info_address = client.get_new_address().await.unwrap();
         let address_info = client.get_address_info(&info_address).await.unwrap();
         assert_eq!(address_info.address, info_address.as_unchecked().clone());
-        assert!(address_info.is_mine.unwrap_or(false));
+        assert!(address_info.is_mine);
         assert!(address_info.solvable.unwrap_or(false));
 
         let unspent_address = client.get_new_address().await.unwrap();
