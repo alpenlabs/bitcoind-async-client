@@ -20,7 +20,7 @@ use corepc_types::v29::{
     GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    SubmitPackage,
+    SubmitPackage, TestMempoolAccept,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -41,7 +41,7 @@ use crate::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         CreateWallet, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, TestMempoolAccept, WalletCreateFundedPsbt,
+        SighashType, SignRawTransactionWithWallet, WalletCreateFundedPsbt,
         WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
@@ -482,11 +482,18 @@ impl Broadcaster for Client {
         }
     }
 
-    async fn test_mempool_accept(&self, tx: &Transaction) -> ClientResult<Vec<TestMempoolAccept>> {
+    async fn test_mempool_accept(
+        &self,
+        tx: &Transaction,
+    ) -> ClientResult<model::TestMempoolAccept> {
         let txstr = serialize_hex(tx);
         trace!(%txstr, "Testing mempool accept");
-        self.call::<Vec<TestMempoolAccept>>("testmempoolaccept", &[to_value([txstr])?])
-            .await
+        let resp = self
+            .call::<TestMempoolAccept>("testmempoolaccept", &[to_value([txstr])?])
+            .await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 
     async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
@@ -946,7 +953,10 @@ mod test {
             .test_mempool_accept(&tx)
             .await
             .expect("must be able to test mempool accept");
-        let got = txids.first().expect("there must be at least one txid");
+        let got = txids
+            .results
+            .first()
+            .expect("there must be at least one txid");
         assert_eq!(
             got.txid,
             tx.compute_txid(),
@@ -1023,6 +1033,7 @@ mod test {
             .test_mempool_accept(signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;
@@ -1402,6 +1413,7 @@ mod test {
             .test_mempool_accept(&signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;
@@ -1428,6 +1440,7 @@ mod test {
             .test_mempool_accept(&signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;

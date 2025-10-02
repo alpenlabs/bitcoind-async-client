@@ -2,7 +2,7 @@ use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, T
 use corepc_types::model::{
     GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    ListUnspent, SubmitPackage,
+    ListUnspent, SubmitPackage, TestMempoolAccept,
 };
 use std::future::Future;
 
@@ -12,8 +12,7 @@ use crate::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         ImportDescriptor, ImportDescriptorResult, ListUnspentQueryOptions,
         PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SignRawTransactionWithWallet,
-        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
-        WalletProcessPsbtResult,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -150,7 +149,7 @@ pub trait Broadcaster {
     fn test_mempool_accept(
         &self,
         tx: &Transaction,
-    ) -> impl Future<Output = ClientResult<Vec<TestMempoolAccept>>> + Send;
+    ) -> impl Future<Output = ClientResult<TestMempoolAccept>> + Send;
 
     /// Submit a package of raw transactions (serialized, hex-encoded) to local node.
     ///
