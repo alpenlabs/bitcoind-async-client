@@ -271,9 +271,9 @@ impl Broadcaster for Client {
         let resp = self
             .call::<TestMempoolAccept>("testmempoolaccept", &[to_value([txstr])?])
             .await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
@@ -396,9 +396,9 @@ impl Wallet for Client {
                 ],
             )
             .await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_address_info(&self, address: &Address) -> ClientResult<model::GetAddressInfo> {
@@ -406,9 +406,9 @@ impl Wallet for Client {
         let resp = self
             .call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
             .await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn list_unspent(
@@ -487,9 +487,9 @@ impl Signer for Client {
                 &[to_value(tx_hex)?, to_value(prev_outputs)?],
             )
             .await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_xpriv(&self) -> ClientResult<Option<Xpriv>> {
@@ -572,9 +572,9 @@ impl Signer for Client {
         let resp = self
             .call::<WalletProcessPsbt>("walletprocesspsbt", &params)
             .await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn psbt_bump_fee(
@@ -589,9 +589,9 @@ impl Signer for Client {
         }
 
         let resp = self.call::<PsbtBumpFee>("psbtbumpfee", &params).await?;
-        Ok(resp
+        resp
             .into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))?)
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
