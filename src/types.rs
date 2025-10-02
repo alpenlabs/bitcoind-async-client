@@ -1,3 +1,5 @@
+//! Types that are not returned by the RPC server, but used as arguments/inputs of the RPC methods.
+
 use bitcoin::{Amount, FeeRate, Txid};
 use serde::{
     de::{self, Visitor},

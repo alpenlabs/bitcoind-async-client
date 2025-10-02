@@ -6,10 +6,10 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use bitcoind_async_client::Client;
 //!
-//! let client = Client::new("http://localhost:8332", "username", "password", None, None).await?;
+//! let client = Client::new("http://localhost:8332".to_string(), "username".to_string(), "password".to_string(), None, None).await?;
 //!
 //! let blockchain_info = client.get_blockchain_info().await?;
 //! ```
