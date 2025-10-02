@@ -30,9 +30,9 @@ pub struct CreateRawTransactionInput {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum CreateRawTransactionOutput {
-    /// A pair of an [`Address`] string and an [`Amount`] in BTC.
+    /// A pair of an [`bitcoin::Address`] string and an [`Amount`] in BTC.
     AddressAmount {
-        /// An [`Address`] string.
+        /// An [`bitcoin::Address`] string.
         address: String,
         /// An [`Amount`] in BTC.
         amount: f64,

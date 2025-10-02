@@ -363,7 +363,7 @@ pub trait Signer {
     ///
     /// # Returns
     ///
-    /// Returns a [`WalletProcessPsbtResult`] with the processed PSBT and completion status.
+    /// Returns a [`WalletProcessPsbt`] with the processed PSBT and completion status.
     fn wallet_process_psbt(
         &self,
         psbt: &str,
