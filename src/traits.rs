@@ -2,18 +2,19 @@ use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, T
 use corepc_types::model::{
     GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    ListUnspent, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+    ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+    WalletCreateFundedPsbt, WalletProcessPsbt,
 };
 use corepc_types::v29::ImportDescriptors;
 use std::future::Future;
 
-use crate::types::ImportDescriptorInput;
+use crate::types::{ImportDescriptorInput, SighashType};
 use crate::{
     client::ClientResult,
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
+        WalletCreateFundedPsbtOptions,
     },
 };
 
@@ -367,9 +368,9 @@ pub trait Signer {
         &self,
         psbt: &str,
         sign: Option<bool>,
-        sighashtype: Option<crate::types::SighashType>,
+        sighashtype: Option<SighashType>,
         bip32_derivs: Option<bool>,
-    ) -> impl Future<Output = ClientResult<WalletProcessPsbtResult>> + Send;
+    ) -> impl Future<Output = ClientResult<WalletProcessPsbt>> + Send;
 
     /// Bumps the fee of an opt-in-RBF transaction, replacing it with a new transaction.
     ///

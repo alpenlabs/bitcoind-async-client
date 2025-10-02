@@ -19,8 +19,8 @@ use corepc_types::v29::{
     GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
-    ListDescriptors, ListTransactions, SignRawTransactionWithWallet, SubmitPackage,
-    TestMempoolAccept,
+    ListDescriptors, ListTransactions, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage,
+    TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
 };
 use corepc_types::{model, v29::CreateWallet};
 use reqwest::{
@@ -41,8 +41,7 @@ use crate::{
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        PreviousTransactionOutput, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbtOptions,
     },
 };
 
@@ -603,18 +602,22 @@ impl Wallet for Client {
         locktime: Option<u32>,
         options: Option<WalletCreateFundedPsbtOptions>,
         bip32_derivs: Option<bool>,
-    ) -> ClientResult<WalletCreateFundedPsbt> {
-        self.call::<WalletCreateFundedPsbt>(
-            "walletcreatefundedpsbt",
-            &[
-                to_value(inputs)?,
-                to_value(outputs)?,
-                to_value(locktime.unwrap_or(0))?,
-                to_value(options.unwrap_or_default())?,
-                to_value(bip32_derivs)?,
-            ],
-        )
-        .await
+    ) -> ClientResult<model::WalletCreateFundedPsbt> {
+        let resp = self
+            .call::<WalletCreateFundedPsbt>(
+                "walletcreatefundedpsbt",
+                &[
+                    to_value(inputs)?,
+                    to_value(outputs)?,
+                    to_value(locktime.unwrap_or(0))?,
+                    to_value(options.unwrap_or_default())?,
+                    to_value(bip32_derivs)?,
+                ],
+            )
+            .await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 
     async fn get_address_info(&self, address: &Address) -> ClientResult<model::GetAddressInfo> {
@@ -774,7 +777,7 @@ impl Signer for Client {
         sign: Option<bool>,
         sighashtype: Option<SighashType>,
         bip32_derivs: Option<bool>,
-    ) -> ClientResult<WalletProcessPsbtResult> {
+    ) -> ClientResult<model::WalletProcessPsbt> {
         let mut params = vec![to_value(psbt)?, to_value(sign.unwrap_or(true))?];
 
         if let Some(sighashtype) = sighashtype {
@@ -785,22 +788,29 @@ impl Signer for Client {
             params.push(to_value(bip32_derivs)?);
         }
 
-        self.call::<WalletProcessPsbtResult>("walletprocesspsbt", &params)
-            .await
+        let resp = self
+            .call::<WalletProcessPsbt>("walletprocesspsbt", &params)
+            .await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 
     async fn psbt_bump_fee(
         &self,
         txid: &Txid,
         options: Option<PsbtBumpFeeOptions>,
-    ) -> ClientResult<PsbtBumpFee> {
+    ) -> ClientResult<model::PsbtBumpFee> {
         let mut params = vec![to_value(txid.to_string())?];
 
         if let Some(options) = options {
             params.push(to_value(options)?);
         }
 
-        self.call::<PsbtBumpFee>("psbtbumpfee", &params).await
+        let resp = self.call::<PsbtBumpFee>("psbtbumpfee", &params).await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 }
 
@@ -1026,7 +1036,7 @@ mod test {
             .wallet_process_psbt(&funded_psbt.psbt.to_string(), None, None, None)
             .await
             .unwrap();
-        assert!(!processed_psbt.psbt.as_ref().unwrap().inputs.is_empty());
+        assert!(!processed_psbt.psbt.inputs.is_empty());
         assert!(processed_psbt.complete);
 
         let finalized_psbt = client
