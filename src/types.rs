@@ -7,8 +7,6 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
-use crate::error::SignRawTransactionWithWalletError;
-
 /// Models the arguments of JSON-RPC method `createrawtransaction`.
 ///
 /// # Note
@@ -70,22 +68,6 @@ impl Serialize for CreateRawTransactionOutput {
             }
         }
     }
-}
-
-/// Models the result of JSON-RPC method `signrawtransactionwithwallet`.
-///
-/// # Note
-///
-/// This assumes that the transactions are present in the underlying Bitcoin
-/// client's wallet.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct SignRawTransactionWithWallet {
-    /// The Transaction ID.
-    pub hex: String,
-    /// If the transaction has a complete set of signatures.
-    pub complete: bool,
-    /// Errors, if any.
-    pub errors: Option<Vec<SignRawTransactionWithWalletError>>,
 }
 
 /// Models the optional previous transaction outputs argument for the method

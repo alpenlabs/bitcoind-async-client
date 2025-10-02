@@ -20,7 +20,7 @@ use corepc_types::v29::{
     GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    SubmitPackage, TestMempoolAccept,
+    SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -41,8 +41,8 @@ use crate::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         CreateWallet, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        SighashType, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
+        WalletProcessPsbtResult,
     },
 };
 
@@ -693,15 +693,19 @@ impl Signer for Client {
         &self,
         tx: &Transaction,
         prev_outputs: Option<Vec<PreviousTransactionOutput>>,
-    ) -> ClientResult<SignRawTransactionWithWallet> {
+    ) -> ClientResult<model::SignRawTransactionWithWallet> {
         let tx_hex = serialize_hex(tx);
         trace!(tx_hex = %tx_hex, "Signing transaction");
         trace!(?prev_outputs, "Signing transaction with previous outputs");
-        self.call::<SignRawTransactionWithWallet>(
-            "signrawtransactionwithwallet",
-            &[to_value(tx_hex)?, to_value(prev_outputs)?],
-        )
-        .await
+        let resp = self
+            .call::<SignRawTransactionWithWallet>(
+                "signrawtransactionwithwallet",
+                &[to_value(tx_hex)?, to_value(prev_outputs)?],
+            )
+            .await?;
+        Ok(resp
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?)
     }
 
     async fn get_xpriv(&self) -> ClientResult<Option<Xpriv>> {
@@ -805,11 +809,7 @@ mod test {
 
     use std::sync::Once;
 
-    use bitcoin::{
-        consensus::{self},
-        hashes::Hash,
-        transaction, Amount, FeeRate, NetworkKind,
-    };
+    use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     use super::*;
@@ -946,7 +946,7 @@ mod test {
             .await
             .unwrap();
         assert!(got.complete);
-        assert!(consensus::encode::deserialize_hex::<Transaction>(&got.hex).is_ok());
+        assert!(got.errors.is_empty());
 
         // test_mempool_accept
         let txids = client
@@ -1194,15 +1194,11 @@ mod test {
             ],
         };
         let parent = client.create_raw_transaction(parent_raw_tx).await.unwrap();
-        let signed_parent: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&parent, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_parent = client
+            .sign_raw_transaction_with_wallet(&parent, None)
+            .await
+            .unwrap()
+            .tx;
 
         // sanity check
         let parent_submitted = client.send_raw_transaction(&signed_parent).await.unwrap();
@@ -1221,15 +1217,11 @@ mod test {
             ],
         };
         let child = client.create_raw_transaction(child_raw_tx).await.unwrap();
-        let signed_child: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&child, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_child = client
+            .sign_raw_transaction_with_wallet(&child, None)
+            .await
+            .unwrap()
+            .tx;
 
         // Ok now we have a parent and a child transaction.
         let result = client
@@ -1276,15 +1268,11 @@ mod test {
         parent.version = transaction::Version(3);
         assert_eq!(parent.version, transaction::Version(3));
         trace!(?parent, "parent:");
-        let signed_parent: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&parent, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_parent = client
+            .sign_raw_transaction_with_wallet(&parent, None)
+            .await
+            .unwrap()
+            .tx;
         assert_eq!(signed_parent.version, transaction::Version(3));
 
         // Assert that the parent tx cannot be broadcasted.
@@ -1315,15 +1303,11 @@ mod test {
             witness_script: None,
             amount: Some(COINBASE_AMOUNT.to_btc()),
         }];
-        let signed_child: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&child, Some(prev_outputs))
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_child = client
+            .sign_raw_transaction_with_wallet(&child, Some(prev_outputs))
+            .await
+            .unwrap()
+            .tx;
         assert_eq!(signed_child.version, transaction::Version(3));
 
         // Assert that the child tx cannot be broadcasted.
