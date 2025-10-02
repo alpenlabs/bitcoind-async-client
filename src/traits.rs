@@ -10,12 +10,12 @@ use std::future::Future;
 
 use crate::types::{ImportDescriptorInput, SighashType};
 use crate::{
-    client::ClientResult,
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
         WalletCreateFundedPsbtOptions,
     },
+    ClientResult,
 };
 
 /// Basic functionality that any Bitcoin client that interacts with the

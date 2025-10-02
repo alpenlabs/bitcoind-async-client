@@ -19,6 +19,8 @@ categories = ["cryptography::cryptocurrencies"]
 keywords = ["crypto", "bitcoin"]
 
 [features]
+default = ["29_0"]
+29_0 = []
 
 [dependencies]
 base64 = "0.22.1"
