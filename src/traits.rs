@@ -4,15 +4,16 @@ use corepc_types::model::{
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
     ListUnspent, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
 };
+use corepc_types::v29::ImportDescriptors;
 use std::future::Future;
 
+use crate::types::ImportDescriptorInput;
 use crate::{
     client::ClientResult,
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        ImportDescriptor, ImportDescriptorResult, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -346,9 +347,9 @@ pub trait Signer {
     /// Imports the descriptors into the wallet.
     fn import_descriptors(
         &self,
-        descriptors: Vec<ImportDescriptor>,
+        descriptors: Vec<ImportDescriptorInput>,
         wallet_name: String,
-    ) -> impl Future<Output = ClientResult<Vec<ImportDescriptorResult>>> + Send;
+    ) -> impl Future<Output = ClientResult<ImportDescriptors>> + Send;
 
     /// Updates a PSBT with input information from the wallet and optionally signs it.
     ///

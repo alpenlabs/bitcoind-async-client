@@ -110,30 +110,9 @@ pub struct PreviousTransactionOutput {
     pub amount: Option<f64>,
 }
 
-/// Models the result of the JSON-RPC method `listdescriptors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ListDescriptors {
-    /// The descriptors
-    pub descriptors: Vec<ListDescriptor>,
-}
-
-/// Models the Descriptor in the result of the JSON-RPC method `listdescriptors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ListDescriptor {
-    /// The descriptor.
-    pub desc: String,
-}
-
-/// Models the result of the JSON-RPC method `importdescriptors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ImportDescriptors {
-    /// The descriptors
-    pub descriptors: Vec<ListDescriptor>,
-}
-
 /// Models the Descriptor in the result of the JSON-RPC method `importdescriptors`.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ImportDescriptor {
+pub struct ImportDescriptorInput {
     /// The descriptor.
     pub desc: String,
     /// Set this descriptor to be the active descriptor
@@ -142,12 +121,6 @@ pub struct ImportDescriptor {
     /// Time from which to start rescanning the blockchain for this descriptor,
     /// in UNIX epoch time. Can also be a string "now"
     pub timestamp: String,
-}
-/// Models the Descriptor in the result of the JSON-RPC method `importdescriptors`.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ImportDescriptorResult {
-    /// Result.
-    pub success: bool,
 }
 
 /// Models the `createwallet` JSON-RPC method.

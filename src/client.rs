@@ -19,8 +19,9 @@ use corepc_types::model;
 use corepc_types::v29::{
     GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
-    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
+    ListDescriptors, ListTransactions, SignRawTransactionWithWallet, SubmitPackage,
+    TestMempoolAccept,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -39,10 +40,9 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        CreateWallet, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
-        WalletProcessPsbtResult,
+        CreateWallet, ImportDescriptorInput, ListUnspentQueryOptions, PreviousTransactionOutput,
+        PsbtBumpFee, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -725,8 +725,8 @@ impl Signer for Client {
         // We are only interested in the one that contains `tr(`
         let descriptor = descriptors
             .iter()
-            .find(|d| d.desc.contains("tr("))
-            .map(|d| d.desc.clone())
+            .find(|d| d.descriptor.contains("tr("))
+            .map(|d| d.descriptor.clone())
             .ok_or(ClientError::Xpriv)?;
 
         // Now we extract the xpriv from the `tr()` up to the first `/`
@@ -744,9 +744,9 @@ impl Signer for Client {
 
     async fn import_descriptors(
         &self,
-        descriptors: Vec<ImportDescriptor>,
+        descriptors: Vec<ImportDescriptorInput>,
         wallet_name: String,
-    ) -> ClientResult<Vec<ImportDescriptorResult>> {
+    ) -> ClientResult<ImportDescriptors> {
         let wallet_args = CreateWallet {
             wallet_name,
             load_on_startup: Some(true),
@@ -763,7 +763,7 @@ impl Signer for Client {
             .await;
 
         let result = self
-            .call::<Vec<ImportDescriptorResult>>("importdescriptors", &[to_value(descriptors)?])
+            .call::<ImportDescriptors>("importdescriptors", &[to_value(descriptors)?])
             .await?;
         Ok(result)
     }
@@ -810,6 +810,7 @@ mod test {
     use std::sync::Once;
 
     use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
+    use corepc_types::v29::ImportDescriptorsResult;
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     use super::*;
@@ -989,7 +990,7 @@ mod test {
         // taken from https://github.com/rust-bitcoin/rust-bitcoin/blob/bb38aeb786f408247d5bbc88b9fa13616c74c009/bitcoin/examples/taproot-psbt.rs#L18C38-L18C149
         let descriptor_string = "tr([e61b318f/20000'/20']tprv8ZgxMBicQKsPd4arFr7sKjSnKFDVMR2JHw9Y8L9nXN4kiok4u28LpHijEudH3mMYoL4pM5UL9Bgdz2M4Cy8EzfErmU9m86ZTw6hCzvFeTg7/101/*)#2plamwqs".to_owned();
         let timestamp = "now".to_owned();
-        let list_descriptors = vec![ImportDescriptor {
+        let list_descriptors = vec![ImportDescriptorInput {
             desc: descriptor_string,
             active: Some(true),
             timestamp,
@@ -997,8 +998,15 @@ mod test {
         let got = client
             .import_descriptors(list_descriptors, "strata".to_owned())
             .await
-            .unwrap();
-        let expected = vec![ImportDescriptorResult { success: true }];
+            .unwrap()
+            .0;
+        let expected = vec![ImportDescriptorsResult {
+            success: true,
+            warnings: Some(vec![
+                "Range not given, using default keypool range".to_string()
+            ]),
+            error: None,
+        }];
         assert_eq!(expected, got);
 
         let psbt_address = client.get_new_address().await.unwrap();
