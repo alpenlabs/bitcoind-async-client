@@ -18,7 +18,7 @@ use bitcoin::{
 use corepc_types::model;
 use corepc_types::v29::{
     GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
-    GetTransaction, ListTransactions,
+    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, ListTransactions,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -37,9 +37,8 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose,
-        GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListDescriptors, ListUnspentQueryOptions,
+        GetAddressInfo, GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetTxOut,
+        ImportDescriptor, ImportDescriptorResult, ListDescriptors, ListUnspentQueryOptions,
         PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
         SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
         WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
@@ -353,23 +352,31 @@ impl Reader for Client {
     async fn get_raw_transaction_verbosity_zero(
         &self,
         txid: &Txid,
-    ) -> ClientResult<GetRawTransactionVerbosityZero> {
-        self.call::<GetRawTransactionVerbosityZero>(
-            "getrawtransaction",
-            &[to_value(txid.to_string())?, to_value(0)?],
-        )
-        .await
+    ) -> ClientResult<model::GetRawTransaction> {
+        let resp = self
+            .call::<GetRawTransaction>(
+                "getrawtransaction",
+                &[to_value(txid.to_string())?, to_value(0)?],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_raw_transaction_verbosity_one(
         &self,
         txid: &Txid,
-    ) -> ClientResult<GetRawTransactionVerbosityOne> {
-        self.call::<GetRawTransactionVerbosityOne>(
-            "getrawtransaction",
-            &[to_value(txid.to_string())?, to_value(1)?],
-        )
-        .await
+    ) -> ClientResult<model::GetRawTransactionVerbose> {
+        let resp = self
+            .call::<GetRawTransactionVerbose>(
+                "getrawtransaction",
+                &[to_value(txid.to_string())?, to_value(1)?],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_tx_out(
@@ -688,7 +695,7 @@ mod test {
     use std::sync::Once;
 
     use bitcoin::{
-        consensus::{self, encode::deserialize_hex},
+        consensus::{self},
         hashes::Hash,
         transaction, Amount, FeeRate, NetworkKind,
     };
@@ -788,8 +795,8 @@ mod test {
             .get_raw_transaction_verbosity_zero(&txid)
             .await
             .unwrap()
-            .0;
-        let got = deserialize_hex::<Transaction>(&got).unwrap().compute_txid();
+            .0
+            .compute_txid();
         assert_eq!(expected, got);
 
         // get_raw_transaction_verbosity_one

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use bitcoin::{
     address::{self, NetworkUnchecked},
-    consensus::{self, encode},
-    Address, Amount, BlockHash, FeeRate, Psbt, Transaction, Txid, Wtxid,
+    consensus::{self},
+    Address, Amount, FeeRate, Psbt, Transaction, Txid,
 };
 use serde::{
     de::{self, Visitor},
@@ -11,22 +11,6 @@ use serde::{
 };
 
 use crate::error::SignRawTransactionWithWalletError;
-
-/// Result of JSON-RPC method `getrawtransaction` with verbosity set to 0.
-///
-/// A string that is serialized, hex-encoded data for transaction.
-///
-/// Method call: `getrawtransaction "txid" ( verbosity )`
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct GetRawTransactionVerbosityZero(pub String);
-
-impl GetRawTransactionVerbosityZero {
-    /// Converts json straight to a [`Transaction`].
-    pub fn transaction(self) -> Result<Transaction, encode::FromHexError> {
-        let transaction: Transaction = encode::deserialize_hex(&self.0)?;
-        Ok(transaction)
-    }
-}
 
 /// Result of JSON-RPC method `getmempoolinfo`.
 ///
@@ -78,27 +62,6 @@ pub struct MempoolFeeBreakdown {
     pub ancestor: Amount,
     #[serde(deserialize_with = "deserialize_bitcoin")]
     pub descendant: Amount,
-}
-
-/// Result of JSON-RPC method `getrawtransaction` with verbosity set to 1.
-///
-/// Method call: `getrawtransaction "txid" ( verbosity )`
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct GetRawTransactionVerbosityOne {
-    pub in_active_chain: Option<bool>,
-    #[serde(deserialize_with = "deserialize_tx")]
-    #[serde(rename = "hex")]
-    pub transaction: Transaction,
-    pub txid: Txid,
-    pub hash: Wtxid,
-    pub size: usize,
-    pub vsize: usize,
-    pub version: u32,
-    pub locktime: u32,
-    pub blockhash: Option<BlockHash>,
-    pub confirmations: Option<u32>,
-    pub time: Option<usize>,
-    pub blocktime: Option<usize>,
 }
 
 /// Result of JSON-RPC method `gettxout`.
@@ -507,32 +470,6 @@ where
         }
     }
     deserializer.deserialize_any(TxidVisitor)
-}
-
-/// Deserializes the transaction hex string into proper [`Transaction`]s.
-fn deserialize_tx<'d, D>(deserializer: D) -> Result<Transaction, D::Error>
-where
-    D: Deserializer<'d>,
-{
-    struct TxVisitor;
-
-    impl Visitor<'_> for TxVisitor {
-        type Value = Transaction;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a transaction hex string expected")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let tx = consensus::encode::deserialize_hex::<Transaction>(v)
-                .expect("failed to deserialize tx hex");
-            Ok(tx)
-        }
-    }
-    deserializer.deserialize_any(TxVisitor)
 }
 
 /// Deserializes a base64-encoded PSBT string into proper [`Psbt`]s.

@@ -1,16 +1,18 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
-use corepc_types::model::{GetBlockchainInfo, GetTransaction, ListTransactions, ListUnspent};
+use corepc_types::model::{
+    GetBlockchainInfo, GetRawTransaction, GetRawTransactionVerbose, GetTransaction,
+    ListTransactions, ListUnspent,
+};
 use std::future::Future;
 
 use crate::{
     client::ClientResult,
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
-        GetAddressInfo, GetMempoolInfo, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
-        GetRawTransactionVerbosityZero, GetTxOut, ImportDescriptor, ImportDescriptorResult,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        GetAddressInfo, GetMempoolInfo, GetRawMempoolVerbose, GetTxOut, ImportDescriptor,
+        ImportDescriptorResult, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
+        PsbtBumpFeeOptions, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -100,13 +102,13 @@ pub trait Reader {
     fn get_raw_transaction_verbosity_zero(
         &self,
         txid: &Txid,
-    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbosityZero>> + Send;
+    ) -> impl Future<Output = ClientResult<GetRawTransaction>> + Send;
 
     /// Gets a raw transaction by its [`Txid`].
     fn get_raw_transaction_verbosity_one(
         &self,
         txid: &Txid,
-    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbosityOne>> + Send;
+    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbose>> + Send;
 
     /// Returns details about an unspent transaction output.
     fn get_tx_out(
