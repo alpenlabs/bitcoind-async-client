@@ -37,10 +37,10 @@ use crate::{
     error::{BitcoinRpcError, ClientError},
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
-        CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
         GetAddressInfo, GetNewAddress, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
         SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
@@ -531,7 +531,7 @@ impl Wallet for Client {
 
     async fn create_raw_transaction(
         &self,
-        raw_tx: CreateRawTransaction,
+        raw_tx: CreateRawTransactionArguments,
     ) -> ClientResult<Transaction> {
         let raw_tx = self
             .call::<String>(
@@ -1115,7 +1115,7 @@ mod test {
         let amount_minus_fees = Amount::from_sat(amount.to_sat() - 2_000);
 
         let send_back_address = client.get_new_address().await.unwrap();
-        let parent_raw_tx = CreateRawTransaction {
+        let parent_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: coinbase_tx.compute_txid().to_string(),
                 vout: 0,
@@ -1147,7 +1147,7 @@ mod test {
         // sanity check
         let parent_submitted = client.send_raw_transaction(&signed_parent).await.unwrap();
 
-        let child_raw_tx = CreateRawTransaction {
+        let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: parent_submitted.to_string(),
                 vout: 0,
@@ -1202,7 +1202,7 @@ mod test {
         let last_block = client.get_block(blocks.first().unwrap()).await.unwrap();
         let coinbase_tx = last_block.coinbase().unwrap();
 
-        let parent_raw_tx = CreateRawTransaction {
+        let parent_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: coinbase_tx.compute_txid().to_string(),
                 vout: 0,
@@ -1233,7 +1233,7 @@ mod test {
 
         // 5k sats as fees.
         let amount_minus_fees = Amount::from_sat(COINBASE_AMOUNT.to_sat() - 43_000);
-        let child_raw_tx = CreateRawTransaction {
+        let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: signed_parent.compute_txid().to_string(),
                 vout: 0,

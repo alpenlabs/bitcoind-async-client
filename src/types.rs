@@ -18,7 +18,7 @@ use crate::error::SignRawTransactionWithWalletError;
 ///
 /// Assumes that the transaction is always "replaceable" by default and has a locktime of 0.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct CreateRawTransaction {
+pub struct CreateRawTransactionArguments {
     pub inputs: Vec<CreateRawTransactionInput>,
     pub outputs: Vec<CreateRawTransactionOutput>,
 }

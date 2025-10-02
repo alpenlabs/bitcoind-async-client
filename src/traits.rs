@@ -8,7 +8,7 @@ use std::future::Future;
 use crate::{
     client::ClientResult,
     types::{
-        CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
+        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         GetAddressInfo, ImportDescriptor, ImportDescriptorResult, ListUnspentQueryOptions,
         PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SignRawTransactionWithWallet,
         SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
@@ -213,7 +213,7 @@ pub trait Wallet {
     /// Creates a raw transaction.
     fn create_raw_transaction(
         &self,
-        raw_tx: CreateRawTransaction,
+        raw_tx: CreateRawTransactionArguments,
     ) -> impl Future<Output = ClientResult<Transaction>> + Send;
 
     /// Creates and funds a PSBT with inputs and outputs from the wallet.
