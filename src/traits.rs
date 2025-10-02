@@ -2,6 +2,7 @@ use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, T
 use corepc_types::model::{
     GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
     GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions, ListUnspent,
+    SubmitPackage,
 };
 use std::future::Future;
 
@@ -11,7 +12,7 @@ use crate::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         GetAddressInfo, ImportDescriptor, ImportDescriptorResult, ListUnspentQueryOptions,
         PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SignRawTransactionWithWallet,
-        SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
+        TestMempoolAccept, WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions,
         WalletProcessPsbtResult,
     },
 };

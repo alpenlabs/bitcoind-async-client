@@ -19,7 +19,7 @@ use corepc_types::model;
 use corepc_types::v29::{
     GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
     GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose, GetRawTransaction,
-    GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
+    GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions, SubmitPackage,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -37,10 +37,10 @@ use crate::{
     error::{BitcoinRpcError, ClientError},
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
-        GetAddressInfo, GetNewAddress, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
+        CreateWallet, GetAddressInfo, GetNewAddress, ImportDescriptor, ImportDescriptorResult,
+        ListDescriptors, ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee,
+        PsbtBumpFeeOptions, SighashType, SignRawTransactionWithWallet, TestMempoolAccept,
         WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
@@ -488,10 +488,54 @@ impl Broadcaster for Client {
             .await
     }
 
-    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<SubmitPackage> {
+    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
-        self.call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
-            .await
+        let resp = self
+            .call::<serde_json::Value>("submitpackage", &[to_value(txstrs)?])
+            .await?;
+        trace!(?resp, "Got submit package response");
+
+        let mut package_map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        // FIXME(corepc-types): Add missing effective-includes field to tx-results
+        // bitcoind only returns effective-includes for some transactions (child txs with fee bumping)
+        // but the model expects it to be present in all transactions
+        if let Some(tx_results) = package_map.get("tx-results").cloned() {
+            if let Some(mut tx_results_map) = tx_results.as_object().cloned() {
+                for (_wtxid, tx_result) in &mut tx_results_map {
+                    if let Some(tx_result_map) = tx_result.as_object_mut() {
+                        if let Some(fees) = tx_result_map.get("fees").cloned() {
+                            if let Some(mut fees_map) = fees.as_object().cloned() {
+                                // Add empty effective-includes if not present
+                                if !fees_map.contains_key("effective-includes") {
+                                    fees_map.insert(
+                                        "effective-includes".to_string(),
+                                        serde_json::Value::Array(vec![]),
+                                    );
+                                }
+                                tx_result_map.insert(
+                                    "fees".to_string(),
+                                    serde_json::Value::Object(fees_map),
+                                );
+                            }
+                        }
+                    }
+                }
+                package_map.insert(
+                    "tx-results".to_string(),
+                    serde_json::Value::Object(tx_results_map),
+                );
+            }
+        }
+
+        let submit_package: SubmitPackage =
+            serde_json::from_value(serde_json::Value::Object(package_map))
+                .map_err(|e| ClientError::Parse(e.to_string()))?;
+
+        submit_package
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
