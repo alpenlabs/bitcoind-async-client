@@ -2,9 +2,8 @@ use std::collections::BTreeMap;
 
 use bitcoin::{
     address::{self, NetworkUnchecked},
-    block::Header,
     consensus::{self, encode},
-    Address, Amount, Block, BlockHash, FeeRate, Psbt, Transaction, Txid, Wtxid,
+    Address, Amount, BlockHash, FeeRate, Psbt, Transaction, Txid, Wtxid,
 };
 use serde::{
     de::{self, Visitor},
@@ -12,89 +11,6 @@ use serde::{
 };
 
 use crate::error::SignRawTransactionWithWalletError;
-
-/// Result of JSON-RPC method `getblockheader` with verbosity set to 0.
-///
-/// A string that is serialized, hex-encoded data for block 'hash'.
-///
-/// Method call: `getblockheader "blockhash" ( verbosity )`
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct GetBlockHeaderVerbosityZero(pub String);
-
-impl GetBlockHeaderVerbosityZero {
-    /// Converts json straight to a [`Header`].
-    pub fn header(self) -> Result<Header, encode::FromHexError> {
-        let header: Header = encode::deserialize_hex(&self.0)?;
-        Ok(header)
-    }
-}
-
-/// Result of JSON-RPC method `getblock` with verbosity set to 0.
-///
-/// A string that is serialized, hex-encoded data for block 'hash'.
-///
-/// Method call: `getblock "blockhash" ( verbosity )`
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct GetBlockVerbosityZero(pub String);
-
-impl GetBlockVerbosityZero {
-    /// Converts json straight to a [`Block`].
-    pub fn block(self) -> Result<Block, encode::FromHexError> {
-        let block: Block = encode::deserialize_hex(&self.0)?;
-        Ok(block)
-    }
-}
-
-/// Result of JSON-RPC method `getblock` with verbosity set to 1.
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
-pub struct GetBlockVerbosityOne {
-    /// The block hash (same as provided) in RPC call.
-    pub hash: String,
-    /// The number of confirmations, or -1 if the block is not on the main chain.
-    pub confirmations: i32,
-    /// The block size.
-    pub size: usize,
-    /// The block size excluding witness data.
-    #[serde(rename = "strippedsize")]
-    pub stripped_size: Option<usize>,
-    /// The block weight as defined in BIP-141.
-    pub weight: u64,
-    /// The block height or index.
-    pub height: usize,
-    /// The block version.
-    pub version: i32,
-    /// The block version formatted in hexadecimal.
-    #[serde(rename = "versionHex")]
-    pub version_hex: String,
-    /// The merkle root
-    #[serde(rename = "merkleroot")]
-    pub merkle_root: String,
-    /// The transaction ids
-    pub tx: Vec<String>,
-    /// The block time expressed in UNIX epoch time.
-    pub time: usize,
-    /// The median block time expressed in UNIX epoch time.
-    #[serde(rename = "mediantime")]
-    pub median_time: Option<usize>,
-    /// The nonce
-    pub nonce: u32,
-    /// The bits.
-    pub bits: String,
-    /// The difficulty.
-    pub difficulty: f64,
-    /// Expected number of hashes required to produce the chain up to this block (in hex).
-    #[serde(rename = "chainwork")]
-    pub chain_work: String,
-    /// The number of transactions in the block.
-    #[serde(rename = "nTx")]
-    pub n_tx: u32,
-    /// The hash of the previous block (if available).
-    #[serde(rename = "previousblockhash")]
-    pub previous_block_hash: Option<String>,
-    /// The hash of the next block (if available).
-    #[serde(rename = "nextblockhash")]
-    pub next_block_hash: Option<String>,
-}
 
 /// Result of JSON-RPC method `getrawtransaction` with verbosity set to 0.
 ///

@@ -17,7 +17,8 @@ use bitcoin::{
 };
 use corepc_types::model;
 use corepc_types::v29::{
-    GetBlockHeaderVerbose, GetBlockchainInfo, GetTransaction, ListTransactions,
+    GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero, GetBlockchainInfo,
+    GetTransaction, ListTransactions,
 };
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
@@ -36,12 +37,12 @@ use crate::{
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetMempoolInfo, GetNewAddress,
-        GetRawMempoolVerbose, GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero,
-        GetTxOut, ImportDescriptor, ImportDescriptorResult, ListDescriptors,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        GetAddressInfo, GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose,
+        GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero, GetTxOut, ImportDescriptor,
+        ImportDescriptorResult, ListDescriptors, ListUnspentQueryOptions,
+        PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions, SighashType,
+        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
     },
 };
 
@@ -285,17 +286,18 @@ impl Reader for Client {
 
     async fn get_block(&self, hash: &BlockHash) -> ClientResult<Block> {
         let get_block = self
-            .call::<GetBlockVerbosityZero>("getblock", &[to_value(hash.to_string())?, to_value(0)?])
+            .call::<GetBlockVerboseZero>("getblock", &[to_value(hash.to_string())?, to_value(0)?])
             .await?;
         let block = get_block
-            .block()
-            .map_err(|err| ClientError::Other(format!("block decode: {err}")))?;
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?
+            .0;
         Ok(block)
     }
 
     async fn get_block_height(&self, hash: &BlockHash) -> ClientResult<u64> {
         let block_verobose = self
-            .call::<GetBlockVerbosityOne>("getblock", &[to_value(hash.to_string())?])
+            .call::<GetBlockVerboseOne>("getblock", &[to_value(hash.to_string())?])
             .await?;
 
         let block_height = block_verobose.height as u64;
