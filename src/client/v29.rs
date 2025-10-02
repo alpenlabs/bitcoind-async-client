@@ -8,14 +8,14 @@ use bitcoin::{
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
+use corepc_types::model;
 use corepc_types::v29::{
-    GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
+    CreateWallet, GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
     ListDescriptors, ListTransactions, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage,
     TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
 };
-use corepc_types::{model, v29::CreateWallet};
 use serde_json::value::{RawValue, Value};
 use tracing::*;
 
@@ -271,8 +271,7 @@ impl Broadcaster for Client {
         let resp = self
             .call::<TestMempoolAccept>("testmempoolaccept", &[to_value([txstr])?])
             .await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -396,8 +395,7 @@ impl Wallet for Client {
                 ],
             )
             .await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -406,8 +404,7 @@ impl Wallet for Client {
         let resp = self
             .call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
             .await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -487,8 +484,7 @@ impl Signer for Client {
                 &[to_value(tx_hex)?, to_value(prev_outputs)?],
             )
             .await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -572,8 +568,7 @@ impl Signer for Client {
         let resp = self
             .call::<WalletProcessPsbt>("walletprocesspsbt", &params)
             .await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -589,8 +584,7 @@ impl Signer for Client {
         }
 
         let resp = self.call::<PsbtBumpFee>("psbtbumpfee", &params).await?;
-        resp
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
