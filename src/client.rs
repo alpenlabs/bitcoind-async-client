@@ -366,8 +366,10 @@ impl Broadcaster for Client {
     async fn send_raw_transaction(&self, tx: &Transaction) -> ClientResult<Txid> {
         let txstr = serialize_hex(tx);
         trace!(txstr = %txstr, "Sending raw transaction");
+        // https://bitcoincore.org/en/doc/27.0.0/rpc/rawtransactions/sendrawtransaction/
+        // Setting maxburnamount, otherwise the tx header can't be attached.
         match self
-            .call::<Txid>("sendrawtransaction", &[to_value(txstr)?])
+            .call::<Txid>("sendrawtransaction", &[to_value(txstr)?, to_value("0")?, to_value("600")?])
             .await
         {
             Ok(txid) => {
