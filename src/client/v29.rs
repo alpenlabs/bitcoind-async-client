@@ -13,8 +13,8 @@ use corepc_types::v29::{
     CreateWallet, GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
-    ListDescriptors, ListTransactions, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage,
-    TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
+    ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet,
+    SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
 };
 use serde_json::value::{RawValue, Value};
 use tracing::*;
@@ -125,53 +125,10 @@ impl Reader for Client {
 
     async fn get_raw_mempool_verbose(&self) -> ClientResult<model::GetRawMempoolVerbose> {
         let resp = self
-            .call::<serde_json::Value>("getrawmempool", &[to_value(true)?])
+            .call::<GetRawMempoolVerbose>("getrawmempool", &[to_value(true)?])
             .await?;
-        trace!(?resp, "Got raw mempool verbose");
 
-        let mut mempool_map: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
-
-        // FIXME(corepc-types): Transform field names in each mempool entry
-        for (_txid, entry) in &mut mempool_map {
-            if let Some(entry_map) = entry.as_object_mut() {
-                // Rename vsize to size
-                if let Some(vsize) = entry_map.remove("vsize") {
-                    entry_map.insert("size".to_string(), vsize);
-                }
-
-                // Flatten fees object: fees.base -> fee, fees.modified -> modifiedfee, etc.
-                // Keep the fees object too, as model might need both
-                if let Some(fees_obj) = entry_map.get("fees").cloned() {
-                    if let Some(fees_map) = fees_obj.as_object() {
-                        if let Some(base) = fees_map.get("base") {
-                            entry_map.insert("fee".to_string(), base.clone());
-                        }
-                        if let Some(modified) = fees_map.get("modified") {
-                            entry_map.insert("modifiedfee".to_string(), modified.clone());
-                        }
-                        if let Some(ancestor) = fees_map.get("ancestor") {
-                            entry_map.insert("ancestorfees".to_string(), ancestor.clone());
-                        }
-                        if let Some(descendant) = fees_map.get("descendant") {
-                            entry_map.insert("descendantfees".to_string(), descendant.clone());
-                        }
-                    }
-                }
-
-                // Remove fields not expected by model
-                entry_map.remove("bip125-replaceable");
-                entry_map.remove("unbroadcast");
-                entry_map.remove("weight");
-            }
-        }
-
-        let mempool_verbose: GetRawMempoolVerbose =
-            serde_json::from_value(serde_json::Value::Object(mempool_map))
-                .map_err(|e| ClientError::Parse(e.to_string()))?;
-
-        mempool_verbose
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
@@ -278,50 +235,11 @@ impl Broadcaster for Client {
     async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
         let resp = self
-            .call::<serde_json::Value>("submitpackage", &[to_value(txstrs)?])
+            .call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
             .await?;
         trace!(?resp, "Got submit package response");
 
-        let mut package_map: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
-
-        // FIXME(corepc-types): Add missing effective-includes field to tx-results
-        // bitcoind only returns effective-includes for some transactions (child txs with fee bumping)
-        // but the model expects it to be present in all transactions
-        if let Some(tx_results) = package_map.get("tx-results").cloned() {
-            if let Some(mut tx_results_map) = tx_results.as_object().cloned() {
-                for (_wtxid, tx_result) in &mut tx_results_map {
-                    if let Some(tx_result_map) = tx_result.as_object_mut() {
-                        if let Some(fees) = tx_result_map.get("fees").cloned() {
-                            if let Some(mut fees_map) = fees.as_object().cloned() {
-                                // Add empty effective-includes if not present
-                                if !fees_map.contains_key("effective-includes") {
-                                    fees_map.insert(
-                                        "effective-includes".to_string(),
-                                        serde_json::Value::Array(vec![]),
-                                    );
-                                }
-                                tx_result_map.insert(
-                                    "fees".to_string(),
-                                    serde_json::Value::Object(fees_map),
-                                );
-                            }
-                        }
-                    }
-                }
-                package_map.insert(
-                    "tx-results".to_string(),
-                    serde_json::Value::Object(tx_results_map),
-                );
-            }
-        }
-
-        let submit_package: SubmitPackage =
-            serde_json::from_value(serde_json::Value::Object(package_map))
-                .map_err(|e| ClientError::Parse(e.to_string()))?;
-
-        submit_package
-            .into_model()
+        resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
@@ -431,41 +349,11 @@ impl Wallet for Client {
             params.push(to_value(query_options)?);
         }
 
-        let resp = self
-            .call::<serde_json::Value>("listunspent", &params)
-            .await?;
+        let resp = self.call::<ListUnspent>("listunspent", &params).await?;
         trace!(?resp, "Got UTXOs");
-        let mut utxos: Vec<serde_json::Value> =
-            serde_json::from_value(resp).map_err(|e| ClientError::Parse(e.to_string()))?;
 
-        // FIXME(corepc-types): Transform field names in each UTXO
-        for utxo in &mut utxos {
-            if let Some(utxo_map) = utxo.as_object_mut() {
-                // Rename scriptPubKey to script_pubkey
-                if let Some(script_pubkey) = utxo_map.remove("scriptPubKey") {
-                    utxo_map.insert("script_pubkey".to_string(), script_pubkey);
-                }
-
-                // Rename desc to descriptor
-                if let Some(desc) = utxo_map.remove("desc") {
-                    utxo_map.insert("descriptor".to_string(), desc);
-                }
-
-                // Add missing label field if not present
-                if !utxo_map.contains_key("label") {
-                    utxo_map.insert(
-                        "label".to_string(),
-                        serde_json::Value::String(String::new()),
-                    );
-                }
-            }
-        }
-
-        let list_unspent: model::ListUnspent =
-            serde_json::from_value(serde_json::Value::Array(utxos))
-                .map_err(|e| ClientError::Parse(e.to_string()))?;
-
-        Ok(list_unspent)
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
