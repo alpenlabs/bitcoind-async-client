@@ -1,17 +1,21 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
+use corepc_types::model::{
+    GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose,
+    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
+    ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
+    WalletCreateFundedPsbt, WalletProcessPsbt,
+};
+use corepc_types::v29::ImportDescriptors;
 use std::future::Future;
 
+use crate::types::{ImportDescriptorInput, SighashType};
 use crate::{
-    client::ClientResult,
     types::{
-        CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput,
-        GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempoolVerbose,
-        GetRawTransactionVerbosityOne, GetRawTransactionVerbosityZero, GetTransaction, GetTxOut,
-        ImportDescriptor, ImportDescriptorResult, ListTransactions, ListUnspent,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
-        WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
+        WalletCreateFundedPsbtOptions,
     },
+    ClientResult,
 };
 
 /// Basic functionality that any Bitcoin client that interacts with the
@@ -86,7 +90,7 @@ pub trait Reader {
     fn get_current_timestamp(&self) -> impl Future<Output = ClientResult<u32>> + Send;
 
     /// Gets all transaction ids in mempool.
-    fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<Vec<Txid>>> + Send;
+    fn get_raw_mempool(&self) -> impl Future<Output = ClientResult<GetRawMempool>> + Send;
 
     /// Gets verbose representation of transactions in mempool.
     fn get_raw_mempool_verbose(
@@ -100,13 +104,13 @@ pub trait Reader {
     fn get_raw_transaction_verbosity_zero(
         &self,
         txid: &Txid,
-    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbosityZero>> + Send;
+    ) -> impl Future<Output = ClientResult<GetRawTransaction>> + Send;
 
     /// Gets a raw transaction by its [`Txid`].
     fn get_raw_transaction_verbosity_one(
         &self,
         txid: &Txid,
-    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbosityOne>> + Send;
+    ) -> impl Future<Output = ClientResult<GetRawTransactionVerbose>> + Send;
 
     /// Returns details about an unspent transaction output.
     fn get_tx_out(
@@ -147,7 +151,7 @@ pub trait Broadcaster {
     fn test_mempool_accept(
         &self,
         tx: &Transaction,
-    ) -> impl Future<Output = ClientResult<Vec<TestMempoolAccept>>> + Send;
+    ) -> impl Future<Output = ClientResult<TestMempoolAccept>> + Send;
 
     /// Submit a package of raw transactions (serialized, hex-encoded) to local node.
     ///
@@ -194,14 +198,6 @@ pub trait Wallet {
         txid: &Txid,
     ) -> impl Future<Output = ClientResult<GetTransaction>> + Send;
 
-    /// Gets all Unspent Transaction Outputs (UTXOs) for the underlying Bitcoin
-    /// client's wallet.
-    #[deprecated(
-        since = "0.4.0",
-        note = "Does not adhere with bitcoin core RPC naming. Use `list_unspent` instead"
-    )]
-    fn get_utxos(&self) -> impl Future<Output = ClientResult<Vec<ListUnspent>>> + Send;
-
     /// Lists transactions in the underlying Bitcoin client's wallet.
     ///
     /// # Parameters
@@ -211,7 +207,7 @@ pub trait Wallet {
     fn list_transactions(
         &self,
         count: Option<usize>,
-    ) -> impl Future<Output = ClientResult<Vec<ListTransactions>>> + Send;
+    ) -> impl Future<Output = ClientResult<ListTransactions>> + Send;
 
     /// Lists all wallets in the underlying Bitcoin client.
     fn list_wallets(&self) -> impl Future<Output = ClientResult<Vec<String>>> + Send;
@@ -219,7 +215,7 @@ pub trait Wallet {
     /// Creates a raw transaction.
     fn create_raw_transaction(
         &self,
-        raw_tx: CreateRawTransaction,
+        raw_tx: CreateRawTransactionArguments,
     ) -> impl Future<Output = ClientResult<Transaction>> + Send;
 
     /// Creates and funds a PSBT with inputs and outputs from the wallet.
@@ -318,7 +314,7 @@ pub trait Wallet {
         addresses: Option<&[Address]>,
         include_unsafe: Option<bool>,
         query_options: Option<ListUnspentQueryOptions>,
-    ) -> impl Future<Output = ClientResult<Vec<ListUnspent>>> + Send;
+    ) -> impl Future<Output = ClientResult<ListUnspent>> + Send;
 }
 
 /// Signing functionality that any Bitcoin client **with private keys** that
@@ -352,9 +348,9 @@ pub trait Signer {
     /// Imports the descriptors into the wallet.
     fn import_descriptors(
         &self,
-        descriptors: Vec<ImportDescriptor>,
+        descriptors: Vec<ImportDescriptorInput>,
         wallet_name: String,
-    ) -> impl Future<Output = ClientResult<Vec<ImportDescriptorResult>>> + Send;
+    ) -> impl Future<Output = ClientResult<ImportDescriptors>> + Send;
 
     /// Updates a PSBT with input information from the wallet and optionally signs it.
     ///
@@ -367,14 +363,14 @@ pub trait Signer {
     ///
     /// # Returns
     ///
-    /// Returns a [`WalletProcessPsbtResult`] with the processed PSBT and completion status.
+    /// Returns a [`WalletProcessPsbt`] with the processed PSBT and completion status.
     fn wallet_process_psbt(
         &self,
         psbt: &str,
         sign: Option<bool>,
-        sighashtype: Option<crate::types::SighashType>,
+        sighashtype: Option<SighashType>,
         bip32_derivs: Option<bool>,
-    ) -> impl Future<Output = ClientResult<WalletProcessPsbtResult>> + Send;
+    ) -> impl Future<Output = ClientResult<WalletProcessPsbt>> + Send;
 
     /// Bumps the fee of an opt-in-RBF transaction, replacing it with a new transaction.
     ///

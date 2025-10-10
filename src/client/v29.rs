@@ -1,253 +1,36 @@
-use std::{
-    env::var,
-    fmt,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+//! This module contains the implementation of the [`Client`] for Bitcoin Core v29.
 
-use base64::{engine::general_purpose, Engine};
+use std::env::var;
+
 use bitcoin::{
     bip32::Xpriv,
     block::Header,
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
-use reqwest::{
-    header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
-    Client as ReqwestClient,
+use corepc_types::model;
+use corepc_types::v29::{
+    CreateWallet, GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
+    GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
+    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
+    ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet,
+    SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
 };
-use serde::{de, Deserialize, Serialize};
-use serde_json::{
-    json,
-    value::{RawValue, Value},
-};
-use tokio::time::sleep;
+use serde_json::value::{RawValue, Value};
 use tracing::*;
 
-use super::types::GetBlockHeaderVerbosityZero;
 use crate::{
-    error::{BitcoinRpcError, ClientError},
+    client::Client,
+    error::ClientError,
+    to_value,
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
-        CreateRawTransaction, CreateRawTransactionInput, CreateRawTransactionOutput, CreateWallet,
-        GetAddressInfo, GetBlockVerbosityOne, GetBlockVerbosityZero, GetBlockchainInfo,
-        GetMempoolInfo, GetNewAddress, GetRawMempoolVerbose, GetRawTransactionVerbosityOne,
-        GetRawTransactionVerbosityZero, GetTransaction, GetTxOut, ImportDescriptor,
-        ImportDescriptorResult, ListDescriptors, ListTransactions, ListUnspent,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFee, PsbtBumpFeeOptions,
-        SighashType, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-        WalletCreateFundedPsbt, WalletCreateFundedPsbtOptions, WalletProcessPsbtResult,
+        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
+        CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
+        PreviousTransactionOutput, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbtOptions,
     },
+    ClientResult,
 };
-
-/// This is an alias for the result type returned by the [`Client`].
-pub type ClientResult<T> = Result<T, ClientError>;
-
-/// The maximum number of retries for a request.
-const DEFAULT_MAX_RETRIES: u8 = 3;
-
-/// The maximum number of retries for a request.
-const DEFAULT_RETRY_INTERVAL_MS: u64 = 1_000;
-
-/// Custom implementation to convert a value to a `Value` type.
-pub fn to_value<T>(value: T) -> ClientResult<Value>
-where
-    T: Serialize,
-{
-    serde_json::to_value(value)
-        .map_err(|e| ClientError::Param(format!("Error creating value: {e}")))
-}
-
-/// An `async` client for interacting with a `bitcoind` instance.
-#[derive(Debug, Clone)]
-pub struct Client {
-    /// The URL of the `bitcoind` instance.
-    url: String,
-
-    /// The underlying `async` HTTP client.
-    client: ReqwestClient,
-
-    /// The ID of the current request.
-    ///
-    /// # Implementation Details
-    ///
-    /// Using an [`Arc`] so that [`Client`] is [`Clone`].
-    id: Arc<AtomicUsize>,
-
-    /// The maximum number of retries for a request.
-    max_retries: u8,
-
-    /// Interval between retries for a request in ms.
-    retry_interval: u64,
-}
-
-/// Response returned by the `bitcoind` RPC server.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct Response<R> {
-    pub result: Option<R>,
-    pub error: Option<BitcoinRpcError>,
-    pub id: u64,
-}
-
-impl Client {
-    /// Creates a new [`Client`] with the given URL, username, and password.
-    pub fn new(
-        url: String,
-        username: String,
-        password: String,
-        max_retries: Option<u8>,
-        retry_interval: Option<u64>,
-    ) -> ClientResult<Self> {
-        if username.is_empty() || password.is_empty() {
-            return Err(ClientError::MissingUserPassword);
-        }
-
-        let user_pw = general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        let authorization = format!("Basic {user_pw}")
-            .parse()
-            .map_err(|_| ClientError::Other("Error parsing header".to_string()))?;
-
-        let content_type = "application/json"
-            .parse()
-            .map_err(|_| ClientError::Other("Error parsing header".to_string()))?;
-        let headers =
-            HeaderMap::from_iter([(AUTHORIZATION, authorization), (CONTENT_TYPE, content_type)]);
-
-        trace!(headers = ?headers);
-
-        let client = ReqwestClient::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| ClientError::Other(format!("Could not create client: {e}")))?;
-
-        let id = Arc::new(AtomicUsize::new(0));
-
-        let max_retries = max_retries.unwrap_or(DEFAULT_MAX_RETRIES);
-        let retry_interval = retry_interval.unwrap_or(DEFAULT_RETRY_INTERVAL_MS);
-
-        trace!(url = %url, "Created bitcoin client");
-
-        Ok(Self {
-            url,
-            client,
-            id,
-            max_retries,
-            retry_interval,
-        })
-    }
-
-    fn next_id(&self) -> usize {
-        self.id.fetch_add(1, Ordering::AcqRel)
-    }
-
-    async fn call<T: de::DeserializeOwned + fmt::Debug>(
-        &self,
-        method: &str,
-        params: &[Value],
-    ) -> ClientResult<T> {
-        let mut retries = 0;
-        loop {
-            trace!(%method, ?params, %retries, "Calling bitcoin client");
-
-            let id = self.next_id();
-
-            let response = self
-                .client
-                .post(&self.url)
-                .json(&json!({
-                    "jsonrpc": "1.0",
-                    "id": id,
-                    "method": method,
-                    "params": params
-                }))
-                .send()
-                .await;
-            trace!(?response, "Response received");
-            match response {
-                Ok(resp) => {
-                    // Check HTTP status code first before parsing body
-                    let resp = match resp.error_for_status() {
-                        Err(e) if e.is_status() => {
-                            if let Some(status) = e.status() {
-                                let reason =
-                                    status.canonical_reason().unwrap_or("Unknown").to_string();
-                                return Err(ClientError::Status(status.as_u16(), reason));
-                            } else {
-                                return Err(ClientError::Other(e.to_string()));
-                            }
-                        }
-                        Err(e) => {
-                            return Err(ClientError::Other(e.to_string()));
-                        }
-                        Ok(resp) => resp,
-                    };
-
-                    let raw_response = resp
-                        .text()
-                        .await
-                        .map_err(|e| ClientError::Parse(e.to_string()))?;
-                    trace!(%raw_response, "Raw response received");
-                    let data: Response<T> = serde_json::from_str(&raw_response)
-                        .map_err(|e| ClientError::Parse(e.to_string()))?;
-                    if let Some(err) = data.error {
-                        return Err(ClientError::Server(err.code, err.message));
-                    }
-                    return data
-                        .result
-                        .ok_or_else(|| ClientError::Other("Empty data received".to_string()));
-                }
-                Err(err) => {
-                    warn!(err = %err, "Error calling bitcoin client");
-
-                    if err.is_body() {
-                        // Body error is unrecoverable
-                        return Err(ClientError::Body(err.to_string()));
-                    } else if err.is_status() {
-                        // Status error is unrecoverable
-                        let e = match err.status() {
-                            Some(code) => ClientError::Status(code.as_u16(), err.to_string()),
-                            _ => ClientError::Other(err.to_string()),
-                        };
-                        return Err(e);
-                    } else if err.is_decode() {
-                        // Error decoding response, might be recoverable
-                        let e = ClientError::MalformedResponse(err.to_string());
-                        warn!(%e, "decoding error, retrying...");
-                    } else if err.is_connect() {
-                        // Connection error, might be recoverable
-                        let e = ClientError::Connection(err.to_string());
-                        warn!(%e, "connection error, retrying...");
-                    } else if err.is_timeout() {
-                        // Timeout error, might be recoverable
-                        let e = ClientError::Timeout;
-                        warn!(%e, "timeout error, retrying...");
-                    } else if err.is_request() {
-                        // General request error, might be recoverable
-                        let e = ClientError::Request(err.to_string());
-                        warn!(%e, "request error, retrying...");
-                    } else if err.is_builder() {
-                        // Request builder error is unrecoverable
-                        return Err(ClientError::ReqBuilder(err.to_string()));
-                    } else if err.is_redirect() {
-                        // Redirect error is unrecoverable
-                        return Err(ClientError::HttpRedirect(err.to_string()));
-                    } else {
-                        // Unknown error is unrecoverable
-                        return Err(ClientError::Other("Unknown error".to_string()));
-                    }
-                }
-            }
-            retries += 1;
-            if retries >= self.max_retries {
-                return Err(ClientError::MaxRetriesExceeded(self.max_retries));
-            }
-            sleep(Duration::from_millis(self.retry_interval)).await;
-        }
-    }
-}
 
 impl Reader for Client {
     async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<u64> {
@@ -270,30 +53,31 @@ impl Reader for Client {
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
         let get_block_header = self
-            .call::<GetBlockHeaderVerbosityZero>(
+            .call::<GetBlockHeaderVerbose>(
                 "getblockheader",
                 &[to_value(hash.to_string())?, to_value(false)?],
             )
             .await?;
         let header = get_block_header
-            .header()
+            .block_header()
             .map_err(|err| ClientError::Other(format!("header decode: {err}")))?;
         Ok(header)
     }
 
     async fn get_block(&self, hash: &BlockHash) -> ClientResult<Block> {
         let get_block = self
-            .call::<GetBlockVerbosityZero>("getblock", &[to_value(hash.to_string())?, to_value(0)?])
+            .call::<GetBlockVerboseZero>("getblock", &[to_value(hash.to_string())?, to_value(0)?])
             .await?;
         let block = get_block
-            .block()
-            .map_err(|err| ClientError::Other(format!("block decode: {err}")))?;
+            .into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))?
+            .0;
         Ok(block)
     }
 
     async fn get_block_height(&self, hash: &BlockHash) -> ClientResult<u64> {
         let block_verobose = self
-            .call::<GetBlockVerbosityOne>("getblock", &[to_value(hash.to_string())?])
+            .call::<GetBlockVerboseOne>("getblock", &[to_value(hash.to_string())?])
             .await?;
 
         let block_height = block_verobose.height as u64;
@@ -319,9 +103,12 @@ impl Reader for Client {
             .await
     }
 
-    async fn get_blockchain_info(&self) -> ClientResult<GetBlockchainInfo> {
-        self.call::<GetBlockchainInfo>("getblockchaininfo", &[])
-            .await
+    async fn get_blockchain_info(&self) -> ClientResult<model::GetBlockchainInfo> {
+        let res = self
+            .call::<GetBlockchainInfo>("getblockchaininfo", &[])
+            .await?;
+        res.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_current_timestamp(&self) -> ClientResult<u32> {
@@ -330,39 +117,55 @@ impl Reader for Client {
         Ok(block.header.time)
     }
 
-    async fn get_raw_mempool(&self) -> ClientResult<Vec<Txid>> {
-        self.call::<Vec<Txid>>("getrawmempool", &[]).await
+    async fn get_raw_mempool(&self) -> ClientResult<model::GetRawMempool> {
+        let resp = self.call::<GetRawMempool>("getrawmempool", &[]).await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_raw_mempool_verbose(&self) -> ClientResult<GetRawMempoolVerbose> {
-        self.call::<GetRawMempoolVerbose>("getrawmempool", &[to_value(true)?])
-            .await
+    async fn get_raw_mempool_verbose(&self) -> ClientResult<model::GetRawMempoolVerbose> {
+        let resp = self
+            .call::<GetRawMempoolVerbose>("getrawmempool", &[to_value(true)?])
+            .await?;
+
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_mempool_info(&self) -> ClientResult<GetMempoolInfo> {
-        self.call::<GetMempoolInfo>("getmempoolinfo", &[]).await
+    async fn get_mempool_info(&self) -> ClientResult<model::GetMempoolInfo> {
+        let resp = self.call::<GetMempoolInfo>("getmempoolinfo", &[]).await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_raw_transaction_verbosity_zero(
         &self,
         txid: &Txid,
-    ) -> ClientResult<GetRawTransactionVerbosityZero> {
-        self.call::<GetRawTransactionVerbosityZero>(
-            "getrawtransaction",
-            &[to_value(txid.to_string())?, to_value(0)?],
-        )
-        .await
+    ) -> ClientResult<model::GetRawTransaction> {
+        let resp = self
+            .call::<GetRawTransaction>(
+                "getrawtransaction",
+                &[to_value(txid.to_string())?, to_value(0)?],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_raw_transaction_verbosity_one(
         &self,
         txid: &Txid,
-    ) -> ClientResult<GetRawTransactionVerbosityOne> {
-        self.call::<GetRawTransactionVerbosityOne>(
-            "getrawtransaction",
-            &[to_value(txid.to_string())?, to_value(1)?],
-        )
-        .await
+    ) -> ClientResult<model::GetRawTransactionVerbose> {
+        let resp = self
+            .call::<GetRawTransactionVerbose>(
+                "getrawtransaction",
+                &[to_value(txid.to_string())?, to_value(1)?],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_tx_out(
@@ -370,16 +173,20 @@ impl Reader for Client {
         txid: &Txid,
         vout: u32,
         include_mempool: bool,
-    ) -> ClientResult<GetTxOut> {
-        self.call::<GetTxOut>(
-            "gettxout",
-            &[
-                to_value(txid.to_string())?,
-                to_value(vout)?,
-                to_value(include_mempool)?,
-            ],
-        )
-        .await
+    ) -> ClientResult<model::GetTxOut> {
+        let resp = self
+            .call::<GetTxOut>(
+                "gettxout",
+                &[
+                    to_value(txid.to_string())?,
+                    to_value(vout)?,
+                    to_value(include_mempool)?,
+                ],
+            )
+            .await
+            .map_err(|e| ClientError::Parse(e.to_string()))?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn network(&self) -> ClientResult<Network> {
@@ -412,17 +219,28 @@ impl Broadcaster for Client {
         }
     }
 
-    async fn test_mempool_accept(&self, tx: &Transaction) -> ClientResult<Vec<TestMempoolAccept>> {
+    async fn test_mempool_accept(
+        &self,
+        tx: &Transaction,
+    ) -> ClientResult<model::TestMempoolAccept> {
         let txstr = serialize_hex(tx);
         trace!(%txstr, "Testing mempool accept");
-        self.call::<Vec<TestMempoolAccept>>("testmempoolaccept", &[to_value([txstr])?])
-            .await
+        let resp = self
+            .call::<TestMempoolAccept>("testmempoolaccept", &[to_value([txstr])?])
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<SubmitPackage> {
+    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
-        self.call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
-            .await
+        let resp = self
+            .call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
+            .await?;
+        trace!(?resp, "Got submit package response");
+
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
@@ -437,20 +255,23 @@ impl Wallet for Client {
             .assume_checked();
         Ok(address_unchecked)
     }
-    async fn get_transaction(&self, txid: &Txid) -> ClientResult<GetTransaction> {
-        self.call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
-            .await
+    async fn get_transaction(&self, txid: &Txid) -> ClientResult<model::GetTransaction> {
+        let resp = self
+            .call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_utxos(&self) -> ClientResult<Vec<ListUnspent>> {
-        let resp = self.call::<Vec<ListUnspent>>("listunspent", &[]).await?;
-        trace!(?resp, "Got UTXOs");
-        Ok(resp)
-    }
-
-    async fn list_transactions(&self, count: Option<usize>) -> ClientResult<Vec<ListTransactions>> {
-        self.call::<Vec<ListTransactions>>("listtransactions", &[to_value(count)?])
-            .await
+    async fn list_transactions(
+        &self,
+        count: Option<usize>,
+    ) -> ClientResult<model::ListTransactions> {
+        let resp = self
+            .call::<ListTransactions>("listtransactions", &[to_value(count)?])
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn list_wallets(&self) -> ClientResult<Vec<String>> {
@@ -459,7 +280,7 @@ impl Wallet for Client {
 
     async fn create_raw_transaction(
         &self,
-        raw_tx: CreateRawTransaction,
+        raw_tx: CreateRawTransactionArguments,
     ) -> ClientResult<Transaction> {
         let raw_tx = self
             .call::<String>(
@@ -479,24 +300,30 @@ impl Wallet for Client {
         locktime: Option<u32>,
         options: Option<WalletCreateFundedPsbtOptions>,
         bip32_derivs: Option<bool>,
-    ) -> ClientResult<WalletCreateFundedPsbt> {
-        self.call::<WalletCreateFundedPsbt>(
-            "walletcreatefundedpsbt",
-            &[
-                to_value(inputs)?,
-                to_value(outputs)?,
-                to_value(locktime.unwrap_or(0))?,
-                to_value(options.unwrap_or_default())?,
-                to_value(bip32_derivs)?,
-            ],
-        )
-        .await
+    ) -> ClientResult<model::WalletCreateFundedPsbt> {
+        let resp = self
+            .call::<WalletCreateFundedPsbt>(
+                "walletcreatefundedpsbt",
+                &[
+                    to_value(inputs)?,
+                    to_value(outputs)?,
+                    to_value(locktime.unwrap_or(0))?,
+                    to_value(options.unwrap_or_default())?,
+                    to_value(bip32_derivs)?,
+                ],
+            )
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn get_address_info(&self, address: &Address) -> ClientResult<GetAddressInfo> {
+    async fn get_address_info(&self, address: &Address) -> ClientResult<model::GetAddressInfo> {
         trace!(address = %address, "Getting address info");
-        self.call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
-            .await
+        let resp = self
+            .call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn list_unspent(
@@ -506,7 +333,7 @@ impl Wallet for Client {
         addresses: Option<&[Address]>,
         include_unsafe: Option<bool>,
         query_options: Option<ListUnspentQueryOptions>,
-    ) -> ClientResult<Vec<ListUnspent>> {
+    ) -> ClientResult<model::ListUnspent> {
         let addr_strings: Vec<String> = addresses
             .map(|addrs| addrs.iter().map(|a| a.to_string()).collect())
             .unwrap_or_default();
@@ -522,7 +349,11 @@ impl Wallet for Client {
             params.push(to_value(query_options)?);
         }
 
-        self.call::<Vec<ListUnspent>>("listunspent", &params).await
+        let resp = self.call::<ListUnspent>("listunspent", &params).await?;
+        trace!(?resp, "Got UTXOs");
+
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
@@ -531,15 +362,18 @@ impl Signer for Client {
         &self,
         tx: &Transaction,
         prev_outputs: Option<Vec<PreviousTransactionOutput>>,
-    ) -> ClientResult<SignRawTransactionWithWallet> {
+    ) -> ClientResult<model::SignRawTransactionWithWallet> {
         let tx_hex = serialize_hex(tx);
         trace!(tx_hex = %tx_hex, "Signing transaction");
         trace!(?prev_outputs, "Signing transaction with previous outputs");
-        self.call::<SignRawTransactionWithWallet>(
-            "signrawtransactionwithwallet",
-            &[to_value(tx_hex)?, to_value(prev_outputs)?],
-        )
-        .await
+        let resp = self
+            .call::<SignRawTransactionWithWallet>(
+                "signrawtransactionwithwallet",
+                &[to_value(tx_hex)?, to_value(prev_outputs)?],
+            )
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_xpriv(&self) -> ClientResult<Option<Xpriv>> {
@@ -559,8 +393,8 @@ impl Signer for Client {
         // We are only interested in the one that contains `tr(`
         let descriptor = descriptors
             .iter()
-            .find(|d| d.desc.contains("tr("))
-            .map(|d| d.desc.clone())
+            .find(|d| d.descriptor.contains("tr("))
+            .map(|d| d.descriptor.clone())
             .ok_or(ClientError::Xpriv)?;
 
         // Now we extract the xpriv from the `tr()` up to the first `/`
@@ -578,26 +412,26 @@ impl Signer for Client {
 
     async fn import_descriptors(
         &self,
-        descriptors: Vec<ImportDescriptor>,
+        descriptors: Vec<ImportDescriptorInput>,
         wallet_name: String,
-    ) -> ClientResult<Vec<ImportDescriptorResult>> {
-        let wallet_args = CreateWallet {
-            wallet_name,
+    ) -> ClientResult<ImportDescriptors> {
+        let wallet_args = CreateWalletArguments {
+            name: wallet_name,
             load_on_startup: Some(true),
         };
 
         // TODO: this should check for -35 error code which is good,
         //       means that is already created
         let _wallet_create = self
-            .call::<Value>("createwallet", &[to_value(wallet_args.clone())?])
+            .call::<CreateWallet>("createwallet", &[to_value(wallet_args.clone())?])
             .await;
         // TODO: this should check for -35 error code which is good, -18 is bad.
         let _wallet_load = self
-            .call::<Value>("loadwallet", &[to_value(wallet_args)?])
+            .call::<CreateWallet>("loadwallet", &[to_value(wallet_args)?])
             .await;
 
         let result = self
-            .call::<Vec<ImportDescriptorResult>>("importdescriptors", &[to_value(descriptors)?])
+            .call::<ImportDescriptors>("importdescriptors", &[to_value(descriptors)?])
             .await?;
         Ok(result)
     }
@@ -608,7 +442,7 @@ impl Signer for Client {
         sign: Option<bool>,
         sighashtype: Option<SighashType>,
         bip32_derivs: Option<bool>,
-    ) -> ClientResult<WalletProcessPsbtResult> {
+    ) -> ClientResult<model::WalletProcessPsbt> {
         let mut params = vec![to_value(psbt)?, to_value(sign.unwrap_or(true))?];
 
         if let Some(sighashtype) = sighashtype {
@@ -619,22 +453,27 @@ impl Signer for Client {
             params.push(to_value(bip32_derivs)?);
         }
 
-        self.call::<WalletProcessPsbtResult>("walletprocesspsbt", &params)
-            .await
+        let resp = self
+            .call::<WalletProcessPsbt>("walletprocesspsbt", &params)
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn psbt_bump_fee(
         &self,
         txid: &Txid,
         options: Option<PsbtBumpFeeOptions>,
-    ) -> ClientResult<PsbtBumpFee> {
+    ) -> ClientResult<model::PsbtBumpFee> {
         let mut params = vec![to_value(txid.to_string())?];
 
         if let Some(options) = options {
             params.push(to_value(options)?);
         }
 
-        self.call::<PsbtBumpFee>("psbtbumpfee", &params).await
+        let resp = self.call::<PsbtBumpFee>("psbtbumpfee", &params).await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
@@ -643,11 +482,8 @@ mod test {
 
     use std::sync::Once;
 
-    use bitcoin::{
-        consensus::{self, encode::deserialize_hex},
-        hashes::Hash,
-        transaction, Amount, FeeRate, NetworkKind,
-    };
+    use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
+    use corepc_types::v29::ImportDescriptorsResult;
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     use super::*;
@@ -734,7 +570,7 @@ mod test {
             .unwrap();
 
         // get_transaction
-        let tx = client.get_transaction(&txid).await.unwrap().hex;
+        let tx = client.get_transaction(&txid).await.unwrap().tx;
         let got = client.send_raw_transaction(&tx).await.unwrap();
         let expected = txid; // Don't touch this!
         assert_eq!(expected, got);
@@ -744,8 +580,8 @@ mod test {
             .get_raw_transaction_verbosity_zero(&txid)
             .await
             .unwrap()
-            .0;
-        let got = deserialize_hex::<Transaction>(&got).unwrap().compute_txid();
+            .0
+            .compute_txid();
         assert_eq!(expected, got);
 
         // get_raw_transaction_verbosity_one
@@ -760,18 +596,18 @@ mod test {
         // get_raw_mempool
         let got = client.get_raw_mempool().await.unwrap();
         let expected = vec![txid];
-        assert_eq!(expected, got);
+        assert_eq!(expected, got.0);
 
         // get_raw_mempool_verbose
         let got = client.get_raw_mempool_verbose().await.unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got.get(&txid).unwrap().height, 101);
+        assert_eq!(got.0.len(), 1);
+        assert_eq!(got.0.get(&txid).unwrap().height, 101);
 
         // get_mempool_info
         let got = client.get_mempool_info().await.unwrap();
-        assert!(got.loaded);
+        assert!(got.loaded.unwrap_or(false));
         assert_eq!(got.size, 1);
-        assert_eq!(got.unbroadcastcount, 1);
+        assert_eq!(got.unbroadcast_count, Some(1));
 
         // estimate_smart_fee
         let got = client.estimate_smart_fee(1).await.unwrap();
@@ -784,14 +620,17 @@ mod test {
             .await
             .unwrap();
         assert!(got.complete);
-        assert!(consensus::encode::deserialize_hex::<Transaction>(&got.hex).is_ok());
+        assert!(got.errors.is_empty());
 
         // test_mempool_accept
         let txids = client
             .test_mempool_accept(&tx)
             .await
             .expect("must be able to test mempool accept");
-        let got = txids.first().expect("there must be at least one txid");
+        let got = txids
+            .results
+            .first()
+            .expect("there must be at least one txid");
         assert_eq!(
             got.txid,
             tx.compute_txid(),
@@ -804,7 +643,7 @@ mod test {
 
         // list_transactions
         let got = client.list_transactions(None).await.unwrap();
-        assert_eq!(got.len(), 10);
+        assert_eq!(got.0.len(), 10);
 
         // list_unspent
         // let's mine one more block
@@ -813,7 +652,7 @@ mod test {
             .list_unspent(None, None, None, None, None)
             .await
             .unwrap();
-        assert_eq!(got.len(), 3);
+        assert_eq!(got.0.len(), 3);
 
         // listdescriptors
         let got = client.get_xpriv().await.unwrap().unwrap().network;
@@ -824,7 +663,7 @@ mod test {
         // taken from https://github.com/rust-bitcoin/rust-bitcoin/blob/bb38aeb786f408247d5bbc88b9fa13616c74c009/bitcoin/examples/taproot-psbt.rs#L18C38-L18C149
         let descriptor_string = "tr([e61b318f/20000'/20']tprv8ZgxMBicQKsPd4arFr7sKjSnKFDVMR2JHw9Y8L9nXN4kiok4u28LpHijEudH3mMYoL4pM5UL9Bgdz2M4Cy8EzfErmU9m86ZTw6hCzvFeTg7/101/*)#2plamwqs".to_owned();
         let timestamp = "now".to_owned();
-        let list_descriptors = vec![ImportDescriptor {
+        let list_descriptors = vec![ImportDescriptorInput {
             desc: descriptor_string,
             active: Some(true),
             timestamp,
@@ -832,8 +671,15 @@ mod test {
         let got = client
             .import_descriptors(list_descriptors, "strata".to_owned())
             .await
-            .unwrap();
-        let expected = vec![ImportDescriptorResult { success: true }];
+            .unwrap()
+            .0;
+        let expected = vec![ImportDescriptorsResult {
+            success: true,
+            warnings: Some(vec![
+                "Range not given, using default keypool range".to_string()
+            ]),
+            error: None,
+        }];
         assert_eq!(expected, got);
 
         let psbt_address = client.get_new_address().await.unwrap();
@@ -853,7 +699,7 @@ mod test {
             .wallet_process_psbt(&funded_psbt.psbt.to_string(), None, None, None)
             .await
             .unwrap();
-        assert!(!processed_psbt.psbt.as_ref().unwrap().inputs.is_empty());
+        assert!(!processed_psbt.psbt.inputs.is_empty());
         assert!(processed_psbt.complete);
 
         let finalized_psbt = client
@@ -868,6 +714,7 @@ mod test {
             .test_mempool_accept(signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;
@@ -876,7 +723,7 @@ mod test {
         let info_address = client.get_new_address().await.unwrap();
         let address_info = client.get_address_info(&info_address).await.unwrap();
         assert_eq!(address_info.address, info_address.as_unchecked().clone());
-        assert!(address_info.is_mine.unwrap_or(false));
+        assert!(address_info.is_mine);
         assert!(address_info.solvable.unwrap_or(false));
 
         let unspent_address = client.get_new_address().await.unwrap();
@@ -896,7 +743,7 @@ mod test {
             .list_unspent(Some(1), Some(9_999_999), None, Some(true), None)
             .await
             .unwrap();
-        assert!(!utxos.is_empty());
+        assert!(!utxos.0.is_empty());
 
         let utxos_filtered = client
             .list_unspent(
@@ -908,8 +755,8 @@ mod test {
             )
             .await
             .unwrap();
-        assert!(!utxos_filtered.is_empty());
-        let found_utxo = utxos_filtered.iter().any(|utxo| {
+        assert!(!utxos_filtered.0.is_empty());
+        let found_utxo = utxos_filtered.0.iter().any(|utxo| {
             utxo.txid.to_string() == unspent_txid
                 && utxo.address.clone().assume_checked().to_string() == unspent_address.to_string()
         });
@@ -930,8 +777,8 @@ mod test {
             )
             .await
             .unwrap();
-        assert!(!utxos_with_query.is_empty());
-        for utxo in &utxos_with_query {
+        assert!(!utxos_with_query.0.is_empty());
+        for utxo in &utxos_with_query.0 {
             let amount_btc = utxo.amount.to_btc();
             assert!((0.5..=2.0).contains(&amount_btc));
         }
@@ -962,7 +809,7 @@ mod test {
             .get_tx_out(&coinbase_tx.compute_txid(), 0, true)
             .await
             .unwrap();
-        assert_eq!(got.value, COINBASE_AMOUNT.to_btc());
+        assert_eq!(got.tx_out.value, COINBASE_AMOUNT);
 
         // gettxout should fail with a spent UTXO.
         let new_address = bitcoind.client.new_address().unwrap();
@@ -1009,7 +856,7 @@ mod test {
         let amount_minus_fees = Amount::from_sat(amount.to_sat() - 2_000);
 
         let send_back_address = client.get_new_address().await.unwrap();
-        let parent_raw_tx = CreateRawTransaction {
+        let parent_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: coinbase_tx.compute_txid().to_string(),
                 vout: 0,
@@ -1028,20 +875,16 @@ mod test {
             ],
         };
         let parent = client.create_raw_transaction(parent_raw_tx).await.unwrap();
-        let signed_parent: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&parent, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_parent = client
+            .sign_raw_transaction_with_wallet(&parent, None)
+            .await
+            .unwrap()
+            .tx;
 
         // sanity check
         let parent_submitted = client.send_raw_transaction(&signed_parent).await.unwrap();
 
-        let child_raw_tx = CreateRawTransaction {
+        let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: parent_submitted.to_string(),
                 vout: 0,
@@ -1055,15 +898,11 @@ mod test {
             ],
         };
         let child = client.create_raw_transaction(child_raw_tx).await.unwrap();
-        let signed_child: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&child, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_child = client
+            .sign_raw_transaction_with_wallet(&child, None)
+            .await
+            .unwrap()
+            .tx;
 
         // Ok now we have a parent and a child transaction.
         let result = client
@@ -1096,7 +935,7 @@ mod test {
         let last_block = client.get_block(blocks.first().unwrap()).await.unwrap();
         let coinbase_tx = last_block.coinbase().unwrap();
 
-        let parent_raw_tx = CreateRawTransaction {
+        let parent_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: coinbase_tx.compute_txid().to_string(),
                 vout: 0,
@@ -1110,15 +949,11 @@ mod test {
         parent.version = transaction::Version(3);
         assert_eq!(parent.version, transaction::Version(3));
         trace!(?parent, "parent:");
-        let signed_parent: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&parent, None)
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_parent = client
+            .sign_raw_transaction_with_wallet(&parent, None)
+            .await
+            .unwrap()
+            .tx;
         assert_eq!(signed_parent.version, transaction::Version(3));
 
         // Assert that the parent tx cannot be broadcasted.
@@ -1127,7 +962,7 @@ mod test {
 
         // 5k sats as fees.
         let amount_minus_fees = Amount::from_sat(COINBASE_AMOUNT.to_sat() - 43_000);
-        let child_raw_tx = CreateRawTransaction {
+        let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
                 txid: signed_parent.compute_txid().to_string(),
                 vout: 0,
@@ -1149,15 +984,11 @@ mod test {
             witness_script: None,
             amount: Some(COINBASE_AMOUNT.to_btc()),
         }];
-        let signed_child: Transaction = consensus::encode::deserialize_hex(
-            client
-                .sign_raw_transaction_with_wallet(&child, Some(prev_outputs))
-                .await
-                .unwrap()
-                .hex
-                .as_str(),
-        )
-        .unwrap();
+        let signed_child = client
+            .sign_raw_transaction_with_wallet(&child, Some(prev_outputs))
+            .await
+            .unwrap()
+            .tx;
         assert_eq!(signed_child.version, transaction::Version(3));
 
         // Assert that the child tx cannot be broadcasted.
@@ -1230,7 +1061,7 @@ mod test {
         // Verify transaction is in mempool (unconfirmed)
         let mempool = client.get_raw_mempool().await.unwrap();
         assert!(
-            mempool.contains(&txid),
+            mempool.0.contains(&txid),
             "Transaction should be in mempool for RBF"
         );
 
@@ -1247,6 +1078,7 @@ mod test {
             .test_mempool_accept(&signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;
@@ -1273,6 +1105,7 @@ mod test {
             .test_mempool_accept(&signed_tx)
             .await
             .unwrap()
+            .results
             .first()
             .unwrap()
             .txid;
