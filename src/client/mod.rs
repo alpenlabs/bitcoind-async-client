@@ -225,4 +225,12 @@ impl Client {
             sleep(Duration::from_millis(self.retry_interval)).await;
         }
     }
+
+    pub async fn call_raw<R: de::DeserializeOwned + std::fmt::Debug>(
+        &self,
+        method: &str,
+        params: &[serde_json::Value],
+    ) -> ClientResult<R> {
+        self.call::<R>(method, params).await
+    }
 }
