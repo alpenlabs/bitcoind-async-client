@@ -1114,4 +1114,30 @@ mod test {
             "Bumped transaction should be accepted in mempool"
         );
     }
+
+    #[tokio::test]
+    async fn call_raw() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+
+        mine_blocks(&bitcoind, 5, None).unwrap();
+
+        let expected = client.get_block_count().await.unwrap();
+
+        let got: u64 = client.call_raw("getblockcount", &[]).await.unwrap();
+
+        assert_eq!(expected, got);
+
+        let height = 0;
+
+        let expected_hash = client.get_block_hash(height).await.unwrap();
+
+        let got_hash: BlockHash = client
+            .call_raw("getblockhash", &[to_value(height).unwrap()])
+            .await
+            .unwrap();
+
+        assert_eq!(expected_hash, got_hash);
+    }
 }
