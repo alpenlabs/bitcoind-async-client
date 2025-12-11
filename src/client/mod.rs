@@ -225,4 +225,13 @@ impl Client {
             sleep(Duration::from_millis(self.retry_interval)).await;
         }
     }
+
+    /// Low-level RPC call wrapper; sends raw params and returns the deserialized result.
+    pub async fn call_raw<R: de::DeserializeOwned + fmt::Debug>(
+        &self,
+        method: &str,
+        params: &[serde_json::Value],
+    ) -> ClientResult<R> {
+        self.call::<R>(method, params).await
+    }
 }
