@@ -23,8 +23,9 @@ pub mod client;
 pub mod error;
 pub mod traits;
 
-// TODO: remove this once upstreamed PRs are merged
 pub mod types;
+
+pub use corepc_types;
 
 pub use client::*;
 
