@@ -32,6 +32,9 @@ use crate::{
     ClientResult,
 };
 
+/// Minimum relay fee rate: 1 sat/vB = 0.00001 BTC/kvB
+const MIN_FEE_RATE_BTC_VKB: f64 = 0.00001;
+
 impl Reader for Client {
     async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<u64> {
         let result = self
@@ -43,12 +46,20 @@ impl Reader for Client {
 
         let btc_vkb = result_map
             .get("feerate")
-            .unwrap_or(&"0.00001".parse::<Value>().unwrap())
-            .as_f64()
-            .unwrap();
+            .and_then(|v| v.as_f64())
+            .unwrap_or(MIN_FEE_RATE_BTC_VKB); // Default to minimum if missing or invalid
 
-        // convert to sat/vB and round up
-        Ok((btc_vkb * 100_000_000.0 / 1000.0) as u64)
+        // Ensure fee rate is positive and non-zero
+        if btc_vkb <= 0.0 {
+            return Err(ClientError::Other(
+                "Invalid fee rate: must be positive".to_string(),
+            ));
+        }
+
+        // Convert BTC/vB to sat/vB
+        let sat_vb = (btc_vkb * 100_000_000.0 / 1_000.0) as u64;
+
+        Ok(sat_vb)
     }
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
