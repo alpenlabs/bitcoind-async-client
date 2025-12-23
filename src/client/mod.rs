@@ -1,5 +1,8 @@
 use std::{
     fmt,
+    fs::File,
+    io::{BufRead, BufReader},
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -42,6 +45,34 @@ where
         .map_err(|e| ClientError::Param(format!("Error creating value: {e}")))
 }
 
+/// The different authentication methods for the client.
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Auth {
+    UserPass(String, String),
+    CookieFile(PathBuf),
+}
+
+impl Auth {
+    pub(crate) fn get_user_pass(self) -> ClientResult<(Option<String>, Option<String>)> {
+        match self {
+            Auth::UserPass(u, p) => Ok((Some(u), Some(p))),
+            Auth::CookieFile(path) => {
+                let line = BufReader::new(
+                    File::open(path).map_err(|e| ClientError::Other(e.to_string()))?,
+                )
+                .lines()
+                .next()
+                .ok_or(ClientError::Other("Invalid cookie file".to_string()))?
+                .map_err(|e| ClientError::Other(e.to_string()))?;
+                let colon = line
+                    .find(':')
+                    .ok_or(ClientError::Other("Invalid cookie file".to_string()))?;
+                Ok((Some(line[..colon].into()), Some(line[colon + 1..].into())))
+            }
+        }
+    }
+}
+
 /// An `async` client for interacting with a `bitcoind` instance.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -77,15 +108,18 @@ impl Client {
     /// Creates a new [`Client`] with the given URL, username, and password.
     pub fn new(
         url: String,
-        username: String,
-        password: String,
+        auth: Auth,
         max_retries: Option<u8>,
         retry_interval: Option<u64>,
         timeout: Option<u64>,
     ) -> ClientResult<Self> {
-        if username.is_empty() || password.is_empty() {
+        let (username_opt, password_opt) = auth.get_user_pass()?;
+        let (Some(username), Some(password)) = (
+            username_opt.filter(|u| !u.is_empty()),
+            password_opt.filter(|p| !p.is_empty()),
+        ) else {
             return Err(ClientError::MissingUserPassword);
-        }
+        };
 
         let user_pw = general_purpose::STANDARD.encode(format!("{username}:{password}"));
         let authorization = format!("Basic {user_pw}")

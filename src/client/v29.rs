@@ -501,6 +501,7 @@ mod test {
     use crate::{
         test_utils::corepc_node_helpers::{get_bitcoind_and_client, mine_blocks},
         types::{CreateRawTransactionInput, CreateRawTransactionOutput},
+        Auth,
     };
 
     /// 50 BTC in [`Network::Regtest`].
@@ -1022,16 +1023,8 @@ mod test {
         let (bitcoind, _) = get_bitcoind_and_client();
         let url = bitcoind.rpc_url();
 
-        // Create client with invalid credentials
-        let invalid_client = Client::new(
-            url,
-            "wrong_user".to_string(),
-            "wrong_password".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let auth = Auth::UserPass("wrong_user".to_string(), "wrong_password".to_string());
+        let invalid_client = Client::new(url, auth, None, None, None).unwrap();
 
         // Try to make any RPC call
         let result = invalid_client.get_blockchain_info().await;
