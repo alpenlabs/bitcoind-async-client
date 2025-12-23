@@ -258,9 +258,9 @@ dependencies = [
 
 [[package]]
 name = "corepc-node"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69bd382fc775f760a8b55d658527621b890eaa3d8e8bc9779864659b172e81c6"
+checksum = "768391062ec3812e223bb3031c5b2fcdd6e0e60b816157f21df82fd3e6617dc0"
 dependencies = [
  "anyhow",
  "bitcoin_hashes",
