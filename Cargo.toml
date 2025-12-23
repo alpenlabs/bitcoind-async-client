@@ -24,8 +24,8 @@ default = ["29_0"]
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = { version = "0.32.6", features = ["serde", "base64"] }
-corepc-types = "0.10.1"
+bitcoin = { version = "0.32.8", features = ["serde", "base64"] }
+corepc-types = "0.10.1" # keep in sync with corepc-node
 hex = { package = "hex-conservative", version = "0.2.1" } # for optimization keep in sync with bitcoin
 reqwest = { version = "0.12.24", default-features = false, features = [
   "http2",
@@ -45,7 +45,7 @@ tracing = { version = "0.1.41", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.100"
-corepc-node = { version = "0.10.0", features = ["29_0", "download"] }
+corepc-node = { version = "0.10.1", features = ["29_0", "download"] } # keep in sync with corepc-types
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [profile.release]
