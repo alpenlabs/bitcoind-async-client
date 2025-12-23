@@ -1018,6 +1018,7 @@ mod test {
             "wrong_password".to_string(),
             None,
             None,
+            None,
         )
         .unwrap();
 

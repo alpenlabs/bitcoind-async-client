@@ -44,7 +44,7 @@ pub mod corepc_node_helpers {
 
         let url = bitcoind.rpc_url();
         let (user, password) = get_auth(&bitcoind);
-        let client = Client::new(url, user, password, None, None).unwrap();
+        let client = Client::new(url, user, password, None, None, None).unwrap();
         (bitcoind, client)
     }
 }

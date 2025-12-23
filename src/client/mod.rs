@@ -30,6 +30,9 @@ const DEFAULT_MAX_RETRIES: u8 = 3;
 /// The maximum number of retries for a request.
 const DEFAULT_RETRY_INTERVAL_MS: u64 = 1_000;
 
+/// The timeout for a request in seconds.
+const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
+
 /// Custom implementation to convert a value to a `Value` type.
 pub fn to_value<T>(value: T) -> ClientResult<Value>
 where
@@ -78,6 +81,7 @@ impl Client {
         password: String,
         max_retries: Option<u8>,
         retry_interval: Option<u64>,
+        timeout: Option<u64>,
     ) -> ClientResult<Self> {
         if username.is_empty() || password.is_empty() {
             return Err(ClientError::MissingUserPassword);
@@ -98,6 +102,9 @@ impl Client {
 
         let client = ReqwestClient::builder()
             .default_headers(headers)
+            .timeout(Duration::from_secs(
+                timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
+            ))
             .build()
             .map_err(|e| ClientError::Other(format!("Could not create client: {e}")))?;
 
