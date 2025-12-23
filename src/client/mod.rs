@@ -94,8 +94,6 @@ impl Client {
         let headers =
             HeaderMap::from_iter([(AUTHORIZATION, authorization), (CONTENT_TYPE, content_type)]);
 
-        trace!(headers = ?headers);
-
         let client = ReqwestClient::builder()
             .default_headers(headers)
             .build()
@@ -143,7 +141,6 @@ impl Client {
                 }))
                 .send()
                 .await;
-            trace!(?response, "Response received");
             match response {
                 Ok(resp) => {
                     // Check HTTP status code first before parsing body
