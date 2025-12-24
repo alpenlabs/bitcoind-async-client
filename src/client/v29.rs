@@ -10,7 +10,7 @@ use bitcoin::{
 };
 use corepc_types::model;
 use corepc_types::v29::{
-    CreateWallet, GetAddressInfo, GetBlockHeaderVerbose, GetBlockVerboseOne, GetBlockVerboseZero,
+    CreateWallet, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne, GetBlockVerboseZero,
     GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
     GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
     ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet,
@@ -64,7 +64,7 @@ impl Reader for Client {
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
         let get_block_header = self
-            .call::<GetBlockHeaderVerbose>(
+            .call::<GetBlockHeader>(
                 "getblockheader",
                 &[to_value(hash.to_string())?, to_value(false)?],
             )
@@ -568,6 +568,12 @@ mod test {
         let expected = blocks.last().unwrap();
         let got = client.get_block_hash(target_height).await.unwrap();
         assert_eq!(*expected, got);
+
+        // get_block_header_at
+        let target_height = blocks.len() as u64;
+        let expected = blocks.last().unwrap();
+        let got = client.get_block_header_at(target_height).await.unwrap();
+        assert_eq!(*expected, got.block_hash());
 
         // get_new_address
         let address = client.get_new_address().await.unwrap();
