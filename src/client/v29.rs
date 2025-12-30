@@ -1115,6 +1115,7 @@ mod test {
         );
     }
 
+    #[cfg(feature = "raw_rpc")]
     #[tokio::test]
     async fn call_raw() {
         init_tracing();
