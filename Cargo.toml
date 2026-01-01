@@ -47,7 +47,7 @@ tracing = { version = "0.1.41", default-features = false }
 [dev-dependencies]
 anyhow = "1.0.100"
 corepc-node = { version = "0.10.1", features = ["29_0", "download"] } # keep in sync with corepc-types
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
 opt-level = "z"   # Optimized for size, use 3 for speed
