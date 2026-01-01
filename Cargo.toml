@@ -42,7 +42,7 @@ serde = "1.0.228"
 serde_json = { version = "1.0.145", features = ["raw_value"] }
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
-tracing = { version = "0.1.41", default-features = false }
+tracing = { version = "0.1.43", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.100"
