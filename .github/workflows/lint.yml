@@ -21,7 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@d24cb726d8cad82fcea4a39b477c68f385dfe09a # 1.85.0
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           cache-on-failure: true
       - run: cargo clippy --examples --tests --benches --all-features --all-targets --locked
