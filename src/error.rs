@@ -2,6 +2,7 @@
 use std::fmt;
 
 use bitcoin::Network;
+use bitreq::Error as BitreqError;
 use serde::{Deserialize, Serialize};
 use serde_json::Error as SerdeJsonError;
 use thiserror::Error;
@@ -36,7 +37,6 @@ pub enum ClientError {
     Body(String),
 
     /// HTTP status error, not retryable
-    // NOTE: Using u16 instead of reqwest::StatusCode because StatusCode doesn't implement Serialize/Deserialize
     #[error("Obtained failure status({0}): {1}")]
     Status(u16, String),
 
@@ -100,6 +100,37 @@ impl ClientError {
 
     pub fn is_missing_or_invalid_input(&self) -> bool {
         matches!(self, Self::Server(-26, _)) || matches!(self, Self::Server(-25, _))
+    }
+}
+
+impl From<BitreqError> for ClientError {
+    fn from(value: BitreqError) -> Self {
+        match value {
+            // Connection errors
+            BitreqError::AddressNotFound
+            | BitreqError::IoError(_)
+            | BitreqError::RustlsCreateConnection(_) => ClientError::Connection(value.to_string()),
+
+            // Redirect errors
+            BitreqError::RedirectLocationMissing
+            | BitreqError::InfiniteRedirectionLoop
+            | BitreqError::TooManyRedirections => ClientError::HttpRedirect(value.to_string()),
+
+            // Size/parsing errors
+            BitreqError::HeadersOverflow
+            | BitreqError::StatusLineOverflow
+            | BitreqError::BodyOverflow
+            | BitreqError::MalformedChunkLength
+            | BitreqError::MalformedChunkEnd
+            | BitreqError::MalformedContentLength
+            | BitreqError::InvalidUtf8InResponse
+            | BitreqError::InvalidUtf8InBody(_) => {
+                ClientError::MalformedResponse(value.to_string())
+            }
+
+            // Other errors
+            _ => ClientError::Other(value.to_string()),
+        }
     }
 }
 
