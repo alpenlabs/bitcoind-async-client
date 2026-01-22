@@ -12,10 +12,7 @@ use std::{
 
 use crate::error::{BitcoinRpcError, ClientError};
 use base64::{engine::general_purpose, Engine};
-use reqwest::{
-    header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE},
-    Client as ReqwestClient,
-};
+use bitreq::{post, Client as BitreqClient, Error as BitreqError};
 use serde::{de, Deserialize, Serialize};
 use serde_json::{json, value::Value};
 use tokio::time::sleep;
@@ -35,6 +32,9 @@ const DEFAULT_RETRY_INTERVAL_MS: u64 = 1_000;
 
 /// The timeout for a request in seconds.
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
+
+/// The default capacity for the HTTP client connection pool.
+const DEFAULT_HTTP_CLIENT_CAPACITY: usize = 10;
 
 /// Custom implementation to convert a value to a `Value` type.
 pub fn to_value<T>(value: T) -> ClientResult<Value>
@@ -74,13 +74,16 @@ impl Auth {
 }
 
 /// An `async` client for interacting with a `bitcoind` instance.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     /// The URL of the `bitcoind` instance.
     url: String,
 
-    /// The underlying `async` HTTP client.
-    client: ReqwestClient,
+    /// The authorization header value for Basic auth.
+    authorization: String,
+
+    /// The timeout for requests in seconds.
+    timeout: u64,
 
     /// The ID of the current request.
     ///
@@ -94,6 +97,23 @@ pub struct Client {
 
     /// Interval between retries for a request in ms.
     retry_interval: u64,
+
+    /// The HTTP client for making requests.
+    ///
+    /// This is used to reuse TCP connections across requests.
+    http_client: BitreqClient,
+}
+
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("url", &self.url)
+            .field("timeout", &self.timeout)
+            .field("id", &self.id)
+            .field("max_retries", &self.max_retries)
+            .field("retry_interval", &self.retry_interval)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Response returned by the `bitcoind` RPC server.
@@ -122,37 +142,26 @@ impl Client {
         };
 
         let user_pw = general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        let authorization = format!("Basic {user_pw}")
-            .parse()
-            .map_err(|_| ClientError::Other("Error parsing header".to_string()))?;
-
-        let content_type = "application/json"
-            .parse()
-            .map_err(|_| ClientError::Other("Error parsing header".to_string()))?;
-        let headers =
-            HeaderMap::from_iter([(AUTHORIZATION, authorization), (CONTENT_TYPE, content_type)]);
-
-        let client = ReqwestClient::builder()
-            .default_headers(headers)
-            .timeout(Duration::from_secs(
-                timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
-            ))
-            .build()
-            .map_err(|e| ClientError::Other(format!("Could not create client: {e}")))?;
+        let authorization = format!("Basic {user_pw}");
 
         let id = Arc::new(AtomicUsize::new(0));
 
         let max_retries = max_retries.unwrap_or(DEFAULT_MAX_RETRIES);
         let retry_interval = retry_interval.unwrap_or(DEFAULT_RETRY_INTERVAL_MS);
+        let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
+
+        let http_client = BitreqClient::new(DEFAULT_HTTP_CLIENT_CAPACITY);
 
         trace!(url = %url, "Created bitcoin client");
 
         Ok(Self {
             url,
-            client,
+            authorization,
+            timeout,
             id,
             max_retries,
             retry_interval,
+            http_client,
         })
     }
 
@@ -171,42 +180,36 @@ impl Client {
 
             let id = self.next_id();
 
-            let response = self
-                .client
-                .post(&self.url)
-                .json(&json!({
-                    "jsonrpc": "1.0",
-                    "id": id,
-                    "method": method,
-                    "params": params
-                }))
-                .send()
-                .await;
+            let body = serde_json::to_vec(&json!({
+                "jsonrpc": "1.0",
+                "id": id,
+                "method": method,
+                "params": params
+            }))
+            .map_err(|e| ClientError::Param(format!("Error serializing request: {e}")))?;
+
+            let request = post(&self.url)
+                .with_header("Authorization", &self.authorization)
+                .with_header("Content-Type", "application/json")
+                .with_body(body)
+                .with_timeout(self.timeout);
+
+            let response = self.http_client.send_async(request).await;
+
             match response {
                 Ok(resp) => {
                     // Check HTTP status code first before parsing body
-                    let resp = match resp.error_for_status() {
-                        Err(e) if e.is_status() => {
-                            if let Some(status) = e.status() {
-                                let reason =
-                                    status.canonical_reason().unwrap_or("Unknown").to_string();
-                                return Err(ClientError::Status(status.as_u16(), reason));
-                            } else {
-                                return Err(ClientError::Other(e.to_string()));
-                            }
-                        }
-                        Err(e) => {
-                            return Err(ClientError::Other(e.to_string()));
-                        }
-                        Ok(resp) => resp,
-                    };
+                    let status_code = resp.status_code;
+                    if !(200..300).contains(&status_code) {
+                        let reason = resp.reason_phrase.clone();
+                        return Err(ClientError::Status(status_code as u16, reason));
+                    }
 
                     let raw_response = resp
-                        .text()
-                        .await
+                        .as_str()
                         .map_err(|e| ClientError::Parse(e.to_string()))?;
                     trace!(%raw_response, "Raw response received");
-                    let data: Response<T> = serde_json::from_str(&raw_response)
+                    let data: Response<T> = serde_json::from_str(raw_response)
                         .map_err(|e| ClientError::Parse(e.to_string()))?;
                     if let Some(err) = data.error {
                         return Err(ClientError::Server(err.code, err.message));
@@ -218,41 +221,10 @@ impl Client {
                 Err(err) => {
                     warn!(err = %err, "Error calling bitcoin client");
 
-                    if err.is_body() {
-                        // Body error is unrecoverable
-                        return Err(ClientError::Body(err.to_string()));
-                    } else if err.is_status() {
-                        // Status error is unrecoverable
-                        let e = match err.status() {
-                            Some(code) => ClientError::Status(code.as_u16(), err.to_string()),
-                            _ => ClientError::Other(err.to_string()),
-                        };
-                        return Err(e);
-                    } else if err.is_decode() {
-                        // Error decoding response, might be recoverable
-                        let e = ClientError::MalformedResponse(err.to_string());
-                        warn!(%e, "decoding error, retrying...");
-                    } else if err.is_connect() {
-                        // Connection error, might be recoverable
-                        let e = ClientError::Connection(err.to_string());
-                        warn!(%e, "connection error, retrying...");
-                    } else if err.is_timeout() {
-                        // Timeout error, might be recoverable
-                        let e = ClientError::Timeout;
-                        warn!(%e, "timeout error, retrying...");
-                    } else if err.is_request() {
-                        // General request error, might be recoverable
-                        let e = ClientError::Request(err.to_string());
-                        warn!(%e, "request error, retrying...");
-                    } else if err.is_builder() {
-                        // Request builder error is unrecoverable
-                        return Err(ClientError::ReqBuilder(err.to_string()));
-                    } else if err.is_redirect() {
-                        // Redirect error is unrecoverable
-                        return Err(ClientError::HttpRedirect(err.to_string()));
-                    } else {
-                        // Unknown error is unrecoverable
-                        return Err(ClientError::Other("Unknown error".to_string()));
+                    // Classify bitreq errors for retry logic
+                    let should_retry = Self::is_error_recoverable(&err);
+                    if !should_retry {
+                        return Err(err.into());
                     }
                 }
             }
@@ -261,6 +233,50 @@ impl Client {
                 return Err(ClientError::MaxRetriesExceeded(self.max_retries));
             }
             sleep(Duration::from_millis(self.retry_interval)).await;
+        }
+    }
+
+    /// Returns `true` if the error is potentially recoverable and should be retried.
+    fn is_error_recoverable(err: &BitreqError) -> bool {
+        match err {
+            // Connection/network errors - might be recoverable
+            BitreqError::AddressNotFound
+            | BitreqError::IoError(_)
+            | BitreqError::RustlsCreateConnection(_) => {
+                warn!(err = %err, "connection error, retrying...");
+                true
+            }
+
+            // Redirect errors - not retryable
+            BitreqError::RedirectLocationMissing => false,
+            BitreqError::InfiniteRedirectionLoop => false,
+            BitreqError::TooManyRedirections => false,
+
+            // Size limit errors - not retryable
+            BitreqError::HeadersOverflow => false,
+            BitreqError::StatusLineOverflow => false,
+            BitreqError::BodyOverflow => false,
+
+            // Protocol/parsing errors - might be recoverable
+            BitreqError::MalformedChunkLength
+            | BitreqError::MalformedChunkEnd
+            | BitreqError::MalformedContentLength
+            | BitreqError::InvalidUtf8InResponse => {
+                warn!(err = %err, "malformed response, retrying...");
+                true
+            }
+
+            // UTF-8 in body - not retryable
+            BitreqError::InvalidUtf8InBody(_) => false,
+
+            // HTTPS not enabled - not retryable
+            BitreqError::HttpsFeatureNotEnabled => false,
+
+            // Other errors - not retryable
+            BitreqError::Other(_) => false,
+
+            // Non-exhaustive match fallback
+            _ => false,
         }
     }
 
