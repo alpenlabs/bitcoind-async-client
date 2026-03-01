@@ -39,7 +39,7 @@ tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
 tracing = { version = "0.1.41", default-features = false }
 
 [dev-dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 corepc-node = { version = "0.10.1", features = ["29_0", "download"] } # keep in sync with corepc-types
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
