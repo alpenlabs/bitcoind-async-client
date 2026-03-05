@@ -158,8 +158,7 @@ impl Reader for Client {
                 "getrawtransaction",
                 &[to_value(txid.to_string())?, to_value(0)?],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
@@ -173,8 +172,7 @@ impl Reader for Client {
                 "getrawtransaction",
                 &[to_value(txid.to_string())?, to_value(1)?],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
@@ -194,8 +192,7 @@ impl Reader for Client {
                     to_value(include_mempool)?,
                 ],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
@@ -1046,6 +1043,50 @@ mod test {
             }
             _ => panic!("Expected Status(401, _) error, but got: {error:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_exposes_rpc_error_code_on_http_500() {
+        init_tracing();
+
+        let (_bitcoind, client) = get_bitcoind_and_client();
+
+        let result = client
+            .call::<String>("sendrawtransaction", &[to_value("deadbeef").unwrap()])
+            .await;
+
+        match result {
+            Err(ClientError::Server(code, message)) => {
+                assert_eq!(code, -22);
+                assert!(
+                    message.to_lowercase().contains("decode"),
+                    "expected decode-related RPC error message, got: {message}"
+                );
+            }
+            other => panic!("Expected Server(-22, _), got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_raw_transaction_exposes_rpc_error_code_on_http_500() {
+        init_tracing();
+
+        let (_bitcoind, client) = get_bitcoind_and_client();
+        let missing_txid = Txid::from_slice(&[0u8; 32]).expect("must be a valid txid");
+
+        let error = client
+            .get_raw_transaction_verbosity_zero(&missing_txid)
+            .await
+            .expect_err("missing txid must fail");
+
+        assert!(
+            !matches!(error, ClientError::Status(..) | ClientError::Parse(..)),
+            "expected parsed RPC error, got transport/parsing error: {error:?}"
+        );
+        assert!(
+            error.is_tx_not_found(),
+            "expected tx-not-found classification, got: {error:?}"
+        );
     }
 
     #[tokio::test]
