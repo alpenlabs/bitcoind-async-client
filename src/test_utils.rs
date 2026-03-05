@@ -3,7 +3,7 @@ pub mod corepc_node_helpers {
     use std::env;
 
     use bitcoin::{Address, BlockHash};
-    use corepc_node::Node;
+    use corepc_node::{Conf, Node};
 
     use crate::{Auth, Client};
 
@@ -38,7 +38,9 @@ pub mod corepc_node_helpers {
         unsafe {
             env::set_var("BITCOIN_XPRIV_RETRIEVABLE", "true");
         }
-        let bitcoind = Node::from_downloaded().unwrap();
+        let mut conf = Conf::default();
+        conf.args.push("-txindex=1");
+        let bitcoind = Node::from_downloaded_with_conf(&conf).unwrap();
 
         let url = bitcoind.rpc_url();
         let client = Client::new(url, get_auth(&bitcoind), None, None, None).unwrap();

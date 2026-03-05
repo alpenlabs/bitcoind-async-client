@@ -198,16 +198,24 @@ impl Client {
 
             match response {
                 Ok(resp) => {
-                    // Check HTTP status code first before parsing body
                     let status_code = resp.status_code;
-                    if !(200..300).contains(&status_code) {
-                        let reason = resp.reason_phrase.clone();
-                        return Err(ClientError::Status(status_code as u16, reason));
-                    }
-
                     let raw_response = resp
                         .as_str()
                         .map_err(|e| ClientError::Parse(e.to_string()))?;
+
+                    if !(200..300).contains(&status_code) {
+                        if let Ok(data) = serde_json::from_str::<Response<Value>>(raw_response) {
+                            if let Some(err) = data.error {
+                                return Err(ClientError::Server(err.code, err.message));
+                            }
+                        }
+
+                        return Err(ClientError::Status(
+                            status_code as u16,
+                            format!("{} | body: {raw_response}", resp.reason_phrase),
+                        ));
+                    }
+
                     trace!(%raw_response, "Raw response received");
                     let data: Response<T> = serde_json::from_str(raw_response)
                         .map_err(|e| ClientError::Parse(e.to_string()))?;

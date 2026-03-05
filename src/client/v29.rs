@@ -158,8 +158,7 @@ impl Reader for Client {
                 "getrawtransaction",
                 &[to_value(txid.to_string())?, to_value(0)?],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
@@ -173,8 +172,7 @@ impl Reader for Client {
                 "getrawtransaction",
                 &[to_value(txid.to_string())?, to_value(1)?],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
@@ -194,8 +192,7 @@ impl Reader for Client {
                     to_value(include_mempool)?,
                 ],
             )
-            .await
-            .map_err(|e| ClientError::Parse(e.to_string()))?;
+            .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
