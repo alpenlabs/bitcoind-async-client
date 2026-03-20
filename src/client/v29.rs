@@ -198,11 +198,11 @@ impl Reader for Client {
     }
 
     async fn network(&self) -> ClientResult<Network> {
-        self.call::<GetBlockchainInfo>("getblockchaininfo", &[])
+        let chain = self
+            .call::<GetBlockchainInfo>("getblockchaininfo", &[])
             .await?
-            .chain
-            .parse::<Network>()
-            .map_err(|e| ClientError::Parse(e.to_string()))
+            .chain;
+        Network::from_core_arg(&chain).map_err(|e| ClientError::Parse(e.to_string()))
     }
 }
 
