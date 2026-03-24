@@ -1193,4 +1193,21 @@ mod test {
 
         assert_eq!(expected_hash, got_hash);
     }
+
+    #[test]
+    fn test_network_chain_response() {
+        let test_cases = vec![
+            ("main", Network::Bitcoin),
+            ("test", Network::Testnet),
+            ("testnet4", Network::Testnet4),
+            ("signet", Network::Signet),
+            ("regtest", Network::Regtest),
+        ];
+
+        for (bitcoind_chain_str, expected_network) in test_cases {
+            let result = Network::from_core_arg(bitcoind_chain_str);
+            assert!(result.is_ok(), "failed for chain: {}", bitcoind_chain_str);
+            assert_eq!(result.unwrap(), expected_network);
+        }
+    }
 }
