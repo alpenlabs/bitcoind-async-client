@@ -25,7 +25,7 @@ jobs:
           rustup toolchain install 1.85.0 --profile minimal
           rustup default 1.85.0
 
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           cache-on-failure: true
 
