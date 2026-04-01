@@ -146,9 +146,9 @@ checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
 
 [[package]]
 name = "bitreq"
-version = "0.3.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1457cbcb911ab2940ef6d94b6df7b428522d62af876fc150d060871bc4a8f395"
+checksum = "08221cf31c5f00fb6fc8fa697cea54176b06801a518bd9d3482aa27099827a3a"
 dependencies = [
  "rustls",
  "rustls-webpki",
