@@ -26,7 +26,7 @@ raw_rpc = []
 [dependencies]
 base64 = "0.22.1"
 bitcoin = { version = "0.32.8", features = ["serde", "base64"] }
-corepc-types = "0.10.1" # keep in sync with corepc-node
+corepc-types = "0.12.0" # keep in sync with corepc-node
 hex = { package = "hex-conservative", version = "0.2.1" } # for optimization keep in sync with bitcoin
 bitreq = { version = "0.3.4", default-features = false, features = ["async-https"] }
 secp256k1 = { version = "0.29.1", features = [ # for optimization keep in sync with bitcoin
