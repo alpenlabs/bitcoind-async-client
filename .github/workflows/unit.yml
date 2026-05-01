@@ -33,7 +33,7 @@ jobs:
           rustup default 1.85.0
 
       - name: Install latest nextest release
-        uses: taiki-e/install-action@47be02f2de8a32619316956f6117e150bdc6763f # v2.62.44
+        uses: taiki-e/install-action@58e862542551f667fa44c8a2a4a1d64ad477c96a # v2.75.17
         with:
           tool: nextest
 
