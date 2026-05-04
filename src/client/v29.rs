@@ -218,11 +218,10 @@ impl Broadcaster for Client {
                 trace!(?txid, "Transaction sent");
                 Ok(txid)
             }
-            Err(ClientError::Server(i, s)) => match i {
-                // Dealing with known and common errors
-                -27 => Ok(tx.compute_txid()), // Tx already in chain
-                _ => Err(ClientError::Server(i, s)),
-            },
+            Err(err @ ClientError::Server(_, _)) if err.is_rpc_verify_already_in_utxo_set() => {
+                Ok(tx.compute_txid())
+            }
+            Err(err @ ClientError::Server(_, _)) => Err(err),
             Err(e) => Err(ClientError::Other(e.to_string())),
         }
     }
