@@ -7,6 +7,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Error as SerdeJsonError;
 use thiserror::Error;
 
+/// Bitcoin Core `RPC_VERIFY_ERROR`, defined in
+/// <https://github.com/bitcoin/bitcoin/blob/8f4a3ba8972dae9412ba975a040cea22c227f983/src/rpc/protocol.h#L47>.
+const RPC_VERIFY_ERROR: i32 = -25;
+/// Bitcoin Core `RPC_VERIFY_REJECTED`, defined in
+/// <https://github.com/bitcoin/bitcoin/blob/8f4a3ba8972dae9412ba975a040cea22c227f983/src/rpc/protocol.h#L48>.
+const RPC_VERIFY_REJECTED: i32 = -26;
+/// Bitcoin Core `RPC_VERIFY_ALREADY_IN_UTXO_SET`, defined in
+/// <https://github.com/bitcoin/bitcoin/blob/8f4a3ba8972dae9412ba975a040cea22c227f983/src/rpc/protocol.h#L49>.
+const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
+
 /// The error type for errors produced in this library.
 #[derive(Error, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientError {
@@ -25,6 +35,7 @@ pub enum ClientError {
     #[error("RPC server returned error '{1}' (code {0})")]
     Server(i32, String),
 
+    /// Error parsing the RPC response, unlikely to be recoverable by retrying
     #[error("Error parsing rpc response: {0}")]
     Parse(String),
 
@@ -90,16 +101,44 @@ pub enum ClientError {
 }
 
 impl ClientError {
+    /// Returns `true` when the RPC server reports an invalid address, key, or missing
+    /// transaction/block identifier (`RPC_INVALID_ADDRESS_OR_KEY`, code `-5`).
     pub fn is_tx_not_found(&self) -> bool {
         matches!(self, Self::Server(-5, _))
     }
 
+    /// Returns `true` when the RPC server reports an invalid address, key, or missing
+    /// transaction/block identifier (`RPC_INVALID_ADDRESS_OR_KEY`, code `-5`).
     pub fn is_block_not_found(&self) -> bool {
         matches!(self, Self::Server(-5, _))
     }
 
+    /// Returns `true` when the RPC server reports a general transaction or block
+    /// submission verification error (`RPC_VERIFY_ERROR`, code `-25`).
+    pub fn is_rpc_verify_error(&self) -> bool {
+        matches!(self, Self::Server(RPC_VERIFY_ERROR, _))
+    }
+
+    /// Returns `true` when the RPC server reports a transaction or block rejected
+    /// by network rules (`RPC_VERIFY_REJECTED`, code `-26`).
+    pub fn is_rpc_verify_rejected(&self) -> bool {
+        matches!(self, Self::Server(RPC_VERIFY_REJECTED, _))
+    }
+
+    /// Returns `true` when the RPC server reports a transaction already present in
+    /// the UTXO set (`RPC_VERIFY_ALREADY_IN_UTXO_SET`, code `-27`).
+    pub fn is_rpc_verify_already_in_utxo_set(&self) -> bool {
+        matches!(self, Self::Server(RPC_VERIFY_ALREADY_IN_UTXO_SET, _))
+    }
+
+    /// Returns `true` when the RPC server reports missing or invalid transaction
+    /// inputs (`RPC_VERIFY_ERROR`, code `-25`).
+    #[deprecated(
+        since = "0.10.4",
+        note = "use is_rpc_verify_error() to detect RPC_VERIFY_ERROR (-25)"
+    )]
     pub fn is_missing_or_invalid_input(&self) -> bool {
-        matches!(self, Self::Server(-26, _)) || matches!(self, Self::Server(-25, _))
+        self.is_rpc_verify_error()
     }
 }
 
@@ -206,5 +245,52 @@ impl fmt::Display for UnexpectedServerVersionError {
             "unexpected bitcoind version, got: {} expected one of: {}",
             self.got, expected
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(deprecated)]
+
+    use super::ClientError;
+
+    #[test]
+    fn classifies_rpc_verify_error() {
+        let error = ClientError::Server(-25, "Input not found or already spent".to_string());
+
+        assert!(error.is_rpc_verify_error());
+        assert!(error.is_missing_or_invalid_input());
+        assert!(!error.is_rpc_verify_rejected());
+        assert!(!error.is_rpc_verify_already_in_utxo_set());
+    }
+
+    #[test]
+    fn classifies_rpc_verify_rejected() {
+        let error = ClientError::Server(-26, "txn-already-in-mempool".to_string());
+
+        assert!(error.is_rpc_verify_rejected());
+        assert!(!error.is_missing_or_invalid_input());
+        assert!(!error.is_rpc_verify_error());
+        assert!(!error.is_rpc_verify_already_in_utxo_set());
+    }
+
+    #[test]
+    fn classifies_rpc_verify_already_in_utxo_set() {
+        let error = ClientError::Server(-27, "transaction already in block chain".to_string());
+
+        assert!(error.is_rpc_verify_already_in_utxo_set());
+        assert!(!error.is_rpc_verify_error());
+        assert!(!error.is_rpc_verify_rejected());
+        assert!(!error.is_missing_or_invalid_input());
+    }
+
+    #[test]
+    fn non_server_errors_do_not_match_rpc_code_helpers() {
+        let error = ClientError::Timeout;
+
+        assert!(!error.is_rpc_verify_error());
+        assert!(!error.is_rpc_verify_rejected());
+        assert!(!error.is_rpc_verify_already_in_utxo_set());
+        assert!(!error.is_missing_or_invalid_input());
     }
 }
