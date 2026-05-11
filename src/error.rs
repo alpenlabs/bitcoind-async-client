@@ -47,7 +47,10 @@ pub enum ClientError {
     #[error("{0}")]
     Body(String),
 
-    /// HTTP status error, not retryable
+    /// HTTP status error.
+    ///
+    /// Server-side failures may be retriable, while client-side failures usually indicate
+    /// configuration or authorization problems.
     #[error("Obtained failure status({0}): {1}")]
     Status(u16, String),
 
@@ -129,6 +132,24 @@ impl ClientError {
     /// the UTXO set (`RPC_VERIFY_ALREADY_IN_UTXO_SET`, code `-27`).
     pub fn is_rpc_verify_already_in_utxo_set(&self) -> bool {
         matches!(self, Self::Server(RPC_VERIFY_ALREADY_IN_UTXO_SET, _))
+    }
+
+    /// Returns `true` when retrying the same RPC request may succeed later.
+    ///
+    /// This classifies transport failures, timeouts, request-construction failures that can
+    /// depend on transient client state, exhausted client-side retries, and HTTP 5xx responses
+    /// as retriable. Bitcoin Core JSON-RPC server errors are operation-specific and return
+    /// `false`; callers should handle those according to the RPC they invoked.
+    pub fn is_retriable(&self) -> bool {
+        matches!(
+            self,
+            Self::Connection(_)
+                | Self::Timeout
+                | Self::Request(_)
+                | Self::Param(_)
+                | Self::MaxRetriesExceeded(_)
+                | Self::Status(500..=599, _)
+        )
     }
 
     /// Returns `true` when the RPC server reports missing or invalid transaction
@@ -292,5 +313,36 @@ mod tests {
         assert!(!error.is_rpc_verify_rejected());
         assert!(!error.is_rpc_verify_already_in_utxo_set());
         assert!(!error.is_missing_or_invalid_input());
+    }
+
+    #[test]
+    fn classifies_retriable_client_errors() {
+        assert!(ClientError::Connection("connection refused".to_string()).is_retriable());
+        assert!(ClientError::Timeout.is_retriable());
+        assert!(ClientError::Request("request failed".to_string()).is_retriable());
+        assert!(ClientError::Param("failed to create params".to_string()).is_retriable());
+        assert!(ClientError::MaxRetriesExceeded(3).is_retriable());
+        assert!(ClientError::Status(500, "internal server error".to_string()).is_retriable());
+        assert!(ClientError::Status(503, "service unavailable".to_string()).is_retriable());
+        assert!(ClientError::Status(599, "network connect timeout".to_string()).is_retriable());
+    }
+
+    #[test]
+    fn classifies_non_retriable_client_errors() {
+        assert!(!ClientError::MissingUserPassword.is_retriable());
+        assert!(
+            !ClientError::Server(-25, "bad-txns-inputs-missingorspent".to_string()).is_retriable()
+        );
+        assert!(!ClientError::Parse("bad json".to_string()).is_retriable());
+        assert!(!ClientError::Body("body error".to_string()).is_retriable());
+        assert!(!ClientError::MalformedResponse("bad response".to_string()).is_retriable());
+        assert!(!ClientError::Status(400, "bad request".to_string()).is_retriable());
+        assert!(!ClientError::Status(401, "unauthorized".to_string()).is_retriable());
+        assert!(!ClientError::Status(499, "client closed request".to_string()).is_retriable());
+        assert!(!ClientError::HttpRedirect("too many redirects".to_string()).is_retriable());
+        assert!(!ClientError::ReqBuilder("invalid request".to_string()).is_retriable());
+        assert!(!ClientError::WrongNetworkAddress(bitcoin::Network::Regtest).is_retriable());
+        assert!(!ClientError::Xpriv.is_retriable());
+        assert!(!ClientError::Other("unknown".to_string()).is_retriable());
     }
 }
