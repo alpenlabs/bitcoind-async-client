@@ -25,7 +25,7 @@ pub mod v29;
 pub type ClientResult<T> = Result<T, ClientError>;
 
 /// The maximum number of retries for a request.
-const DEFAULT_MAX_RETRIES: u8 = 3;
+const DEFAULT_MAX_RETRIES: u16 = 3;
 
 /// The maximum number of retries for a request.
 const DEFAULT_RETRY_INTERVAL_MS: u64 = 1_000;
@@ -93,7 +93,7 @@ pub struct Client {
     id: Arc<AtomicUsize>,
 
     /// The maximum number of retries for a request.
-    max_retries: u8,
+    max_retries: u16,
 
     /// Interval between retries for a request in ms.
     retry_interval: u64,
@@ -129,7 +129,7 @@ impl Client {
     pub fn new(
         url: String,
         auth: Auth,
-        max_retries: Option<u8>,
+        max_retries: Option<u16>,
         retry_interval: Option<u64>,
         timeout: Option<u64>,
     ) -> ClientResult<Self> {
