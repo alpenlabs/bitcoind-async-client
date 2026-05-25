@@ -76,7 +76,7 @@ pub enum ClientError {
 
     /// Maximum retries exceeded, not retryable
     #[error("Max retries {0} exceeded")]
-    MaxRetriesExceeded(u8),
+    MaxRetriesExceeded(u16),
 
     /// General request error, retry might help
     #[error("Could not create request: {0}")]
