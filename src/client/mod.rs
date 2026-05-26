@@ -15,7 +15,10 @@ use base64::{engine::general_purpose, Engine};
 use bitreq::{post, Client as BitreqClient, Error as BitreqError};
 use serde::{de, Deserialize, Serialize};
 use serde_json::{json, value::Value};
-use tokio::time::sleep;
+use tokio::{
+    sync::{OwnedSemaphorePermit, Semaphore},
+    time::sleep,
+};
 use tracing::*;
 
 #[cfg(feature = "29_0")]
@@ -102,6 +105,12 @@ pub struct Client {
     ///
     /// This is used to reuse TCP connections across requests.
     http_client: BitreqClient,
+
+    /// Optional application-level limit for concurrent JSON-RPC requests.
+    max_in_flight_requests: Option<usize>,
+
+    /// Semaphore enforcing [`Self::max_in_flight_requests`].
+    request_limiter: Option<Arc<Semaphore>>,
 }
 
 impl fmt::Debug for Client {
@@ -112,6 +121,7 @@ impl fmt::Debug for Client {
             .field("id", &self.id)
             .field("max_retries", &self.max_retries)
             .field("retry_interval", &self.retry_interval)
+            .field("max_in_flight_requests", &self.max_in_flight_requests)
             .finish_non_exhaustive()
     }
 }
@@ -133,6 +143,21 @@ impl Client {
         retry_interval: Option<u64>,
         timeout: Option<u64>,
     ) -> ClientResult<Self> {
+        Self::new_with_max_in_flight_requests(url, auth, max_retries, retry_interval, timeout, None)
+    }
+
+    /// Creates a new [`Client`] with an optional concurrent request limit.
+    ///
+    /// `Some(1)` serializes all JSON-RPC requests made through this client. `None` keeps the
+    /// default behavior without adding an application-level concurrency limit.
+    pub fn new_with_max_in_flight_requests(
+        url: String,
+        auth: Auth,
+        max_retries: Option<u16>,
+        retry_interval: Option<u64>,
+        timeout: Option<u64>,
+        max_in_flight_requests: Option<usize>,
+    ) -> ClientResult<Self> {
         let (username_opt, password_opt) = auth.get_user_pass()?;
         let (Some(username), Some(password)) = (
             username_opt.filter(|u| !u.is_empty()),
@@ -151,6 +176,17 @@ impl Client {
         let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
 
         let http_client = BitreqClient::new(DEFAULT_HTTP_CLIENT_CAPACITY);
+        let request_limiter = max_in_flight_requests
+            .map(|limit| {
+                if limit == 0 {
+                    Err(ClientError::Param(
+                        "max_in_flight_requests must be greater than 0".to_string(),
+                    ))
+                } else {
+                    Ok(Arc::new(Semaphore::new(limit)))
+                }
+            })
+            .transpose()?;
 
         trace!(url = %url, "Created bitcoin client");
 
@@ -162,6 +198,8 @@ impl Client {
             max_retries,
             retry_interval,
             http_client,
+            max_in_flight_requests,
+            request_limiter,
         })
     }
 
@@ -169,11 +207,24 @@ impl Client {
         self.id.fetch_add(1, Ordering::AcqRel)
     }
 
+    async fn acquire_request_permit(&self) -> ClientResult<Option<OwnedSemaphorePermit>> {
+        match &self.request_limiter {
+            Some(limiter) => limiter
+                .clone()
+                .acquire_owned()
+                .await
+                .map(Some)
+                .map_err(|_| ClientError::Other("request limiter closed".to_string())),
+            None => Ok(None),
+        }
+    }
+
     async fn call<T: de::DeserializeOwned + fmt::Debug>(
         &self,
         method: &str,
         params: &[Value],
     ) -> ClientResult<T> {
+        let _permit = self.acquire_request_permit().await?;
         let mut retries = 0;
         loop {
             trace!(%method, ?params, %retries, "Calling bitcoin client");
@@ -359,6 +410,54 @@ mod tests {
             .await
             .expect("write response");
         stream.flush().await.expect("flush response");
+    }
+
+    #[test]
+    fn new_with_max_in_flight_requests_rejects_zero() {
+        let error = Client::new_with_max_in_flight_requests(
+            "http://127.0.0.1:8332".to_string(),
+            Auth::UserPass("user".to_string(), "pass".to_string()),
+            None,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("zero request limit must fail");
+
+        assert!(matches!(error, ClientError::Param(message) if message.contains("greater than 0")));
+    }
+
+    #[tokio::test]
+    async fn max_in_flight_requests_limits_per_client_concurrency() {
+        let client = Client::new_with_max_in_flight_requests(
+            "http://127.0.0.1:8332".to_string(),
+            Auth::UserPass("user".to_string(), "pass".to_string()),
+            None,
+            None,
+            None,
+            Some(1),
+        )
+        .expect("client");
+
+        let permit = client
+            .acquire_request_permit()
+            .await
+            .expect("first permit")
+            .expect("limiter enabled");
+        let blocked = timeout(Duration::from_millis(25), client.acquire_request_permit()).await;
+        assert!(
+            blocked.is_err(),
+            "second permit must wait while the first is held"
+        );
+
+        drop(permit);
+
+        let second = timeout(Duration::from_millis(25), client.acquire_request_permit())
+            .await
+            .expect("second permit should be available")
+            .expect("second permit should succeed")
+            .expect("limiter enabled");
+        drop(second);
     }
 
     /// Regression test for issue #101: a pooled keep-alive socket that is later
