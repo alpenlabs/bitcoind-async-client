@@ -495,6 +495,12 @@ mod test {
     /// Fee rate used for the transactions that train Bitcoin Core's fee estimator.
     const FEE_ESTIMATION_FEE_RATE: FeeRate = FeeRate::from_sat_per_kwu(500);
 
+    /// Maximum polling attempts while waiting for regtest P2P relay/validation in CI.
+    const FEE_ESTIMATION_WAIT_ATTEMPTS: usize = 1_200;
+
+    /// Polling interval for fee-estimation setup waits.
+    const FEE_ESTIMATION_WAIT_INTERVAL: Duration = Duration::from_millis(50);
+
     /// Only attempts to start tracing once.
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -538,22 +544,22 @@ mod test {
 
     /// Waits until the async client observes the expected block height.
     async fn wait_for_block_count(client: &Client, expected: u64) {
-        for _ in 0..200 {
+        for _ in 0..FEE_ESTIMATION_WAIT_ATTEMPTS {
             if client.get_block_count().await.unwrap() == expected {
                 return;
             }
-            sleep(Duration::from_millis(50)).await;
+            sleep(FEE_ESTIMATION_WAIT_INTERVAL).await;
         }
         panic!("timed out waiting for block height {expected}");
     }
 
     /// Waits until the async client observes at least the expected number of mempool transactions.
     async fn wait_for_mempool_len(client: &Client, expected: usize) {
-        for _ in 0..200 {
+        for _ in 0..FEE_ESTIMATION_WAIT_ATTEMPTS {
             if client.get_raw_mempool().await.unwrap().0.len() >= expected {
                 return;
             }
-            sleep(Duration::from_millis(50)).await;
+            sleep(FEE_ESTIMATION_WAIT_INTERVAL).await;
         }
         panic!("timed out waiting for {expected} transactions in mempool");
     }
