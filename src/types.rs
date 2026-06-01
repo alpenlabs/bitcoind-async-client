@@ -146,6 +146,25 @@ where
     }
 }
 
+/// Serializes the optional [`FeeRate`] into sat/vB.
+///
+/// Bitcoin Core's `fee_rate` option (e.g. for `walletcreatefundedpsbt` and `psbtbumpfee`) is
+/// expressed in sat/vB, while [`FeeRate`] stores its value internally in sat/kwu
+/// (250 sat/kwu = 1 sat/vB). Serializing the value as a fractional sat/vB number preserves
+/// sub-1 sat/vB fee rates.
+fn serialize_option_fee_rate<S>(
+    fee_rate: &Option<FeeRate>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match fee_rate {
+        Some(fr) => serializer.serialize_some(&(fr.to_sat_per_kwu() as f64 / 250.0)),
+        None => serializer.serialize_none(),
+    }
+}
+
 /// Deserializes the transaction id string into proper [`Txid`]s.
 fn deserialize_txid<'d, D>(deserializer: D) -> Result<Txid, D::Error>
 where
@@ -324,7 +343,10 @@ pub struct PsbtBumpFeeOptions {
     pub conf_target: Option<u16>,
 
     /// Fee rate in sat/vB.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_fee_rate"
+    )]
     pub fee_rate: Option<FeeRate>,
 
     /// Whether the new transaction should be BIP-125 replaceable.

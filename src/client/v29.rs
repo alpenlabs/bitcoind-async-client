@@ -1140,7 +1140,7 @@ mod test {
 
         // Test psbt_bump_fee with custom fee rate
         let options = PsbtBumpFeeOptions {
-            fee_rate: Some(FeeRate::from_sat_per_kwu(20)), // 20 sat/vB - higher than default
+            fee_rate: Some(FeeRate::from_sat_per_vb(20).unwrap()), // 20 sat/vB - higher than default
             ..Default::default()
         };
         trace!(?options, "Calling psbt_bump_fee");
