@@ -263,8 +263,13 @@ pub struct WalletCreateFundedPsbtOptions {
     ///
     /// If specified, this overrides the `conf_target` parameter for fee estimation.
     /// Must be a positive value representing the desired fee density.
-    #[serde(default, rename = "fee_rate", skip_serializing_if = "Option::is_none")]
-    pub fee_rate: Option<f64>,
+    #[serde(
+        default,
+        rename = "fee_rate",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_fee_rate"
+    )]
+    pub fee_rate: Option<FeeRate>,
 
     /// Whether to lock the selected UTXOs to prevent them from being spent by other transactions.
     ///
