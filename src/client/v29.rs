@@ -10,13 +10,13 @@ use bitcoin::{
 };
 use corepc_types::model;
 use corepc_types::v29::{
-    CreateWallet, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne, GetBlockVerboseZero,
-    GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
-    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
-    ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet,
-    SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
+    CreateWallet, EstimateSmartFee, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne,
+    GetBlockVerboseZero, GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool,
+    GetRawMempoolVerbose, GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut,
+    ImportDescriptors, ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee,
+    SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+    WalletProcessPsbt,
 };
-use serde_json::value::{RawValue, Value};
 use tracing::*;
 
 use crate::{
@@ -32,34 +32,14 @@ use crate::{
     ClientResult,
 };
 
-/// Minimum relay fee rate: 1 sat/vB = 0.00001 BTC/kvB
-const MIN_FEE_RATE_BTC_VKB: f64 = 0.00001;
-
 impl Reader for Client {
-    async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<u64> {
-        let result = self
-            .call::<Box<RawValue>>("estimatesmartfee", &[to_value(conf_target)?])
-            .await?
-            .to_string();
+    async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<model::EstimateSmartFee> {
+        let resp = self
+            .call::<EstimateSmartFee>("estimatesmartfee", &[to_value(conf_target)?])
+            .await?;
 
-        let result_map: Value = result.parse::<Value>()?;
-
-        let btc_vkb = result_map
-            .get("feerate")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(MIN_FEE_RATE_BTC_VKB); // Default to minimum if missing or invalid
-
-        // Ensure fee rate is positive and non-zero
-        if btc_vkb <= 0.0 {
-            return Err(ClientError::Other(
-                "Invalid fee rate: must be positive".to_string(),
-            ));
-        }
-
-        // Convert BTC/vB to sat/vB
-        let sat_vb = (btc_vkb * 100_000_000.0 / 1_000.0) as u64;
-
-        Ok(sat_vb)
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
@@ -624,9 +604,11 @@ mod test {
         assert_eq!(got.unbroadcast_count, Some(1));
 
         // estimate_smart_fee
+        // On regtest there is no fee-estimation history, so Bitcoin Core returns no `feerate`
+        // and instead populates `errors`.
         let got = client.estimate_smart_fee(1).await.unwrap();
-        let expected = 1; // 1 sat/vB
-        assert_eq!(expected, got);
+        assert!(got.fee_rate.is_none());
+        assert!(got.errors.is_some());
 
         // sign_raw_transaction_with_wallet
         let got = client
