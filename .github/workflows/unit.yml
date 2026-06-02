@@ -19,9 +19,17 @@ permissions: {}
 
 jobs:
   test:
-    name: Run unit tests and generate report
+    name: Run unit tests and generate report (${{ matrix.version }})
     runs-on: ubuntu-latest
     timeout-minutes: 60 # better fail-safe than the default 360 in github actions
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "Bitcoin Core 29"
+            feature: "29_0"
+          - version: "Bitcoin Core 30.2"
+            feature: "30_2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
@@ -43,14 +51,22 @@ jobs:
 
       - name: Run tests
         run: |
-          cargo --locked nextest run --all-features
+          cargo --locked nextest run --no-default-features --features ${{ matrix.feature }}
 
   doc:
-    name: Run doc tests
+    name: Run doc tests (${{ matrix.version }})
     runs-on: ubuntu-latest
     env:
       RUST_BACKTRACE: 1
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "Bitcoin Core 29"
+            feature: "29_0"
+          - version: "Bitcoin Core 30.2"
+            feature: "30_2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
@@ -66,7 +82,7 @@ jobs:
           cache-on-failure: true
 
       - name: Run doctests
-        run: cargo test --doc --all-features
+        run: cargo test --doc --no-default-features --features ${{ matrix.feature }}
 
   unit-success:
     name: Check that unit tests pass

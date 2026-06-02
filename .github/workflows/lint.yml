@@ -13,9 +13,17 @@ permissions: {}
 
 jobs:
   clippy:
-    name: Run clippy on crates
+    name: Run clippy on crates (${{ matrix.version }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "Bitcoin Core 29"
+            feature: "29_0"
+          - version: "Bitcoin Core 30.2"
+            feature: "30_2"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
@@ -27,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           cache-on-failure: true
-      - run: cargo clippy --examples --tests --benches --all-features --all-targets --locked
+      - run: cargo clippy --examples --tests --benches --no-default-features --features ${{ matrix.feature }} --all-targets --locked
         env:
           RUSTFLAGS: -D warnings
 
