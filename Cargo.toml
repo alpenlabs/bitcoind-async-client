@@ -25,7 +25,7 @@ raw_rpc = []
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = { version = "0.32.8", features = ["serde", "base64"] }
+bitcoin = { version = "0.32.9", features = ["serde", "base64"] }
 bitreq = { version = "0.3.4", default-features = false, features = [
   "async-https",
 ] }
