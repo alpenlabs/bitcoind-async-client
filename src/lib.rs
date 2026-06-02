@@ -2,7 +2,8 @@
 //!
 //! # Features
 //!
-//! - `29_0`: Enable support for Bitcoin Core v29
+//! - `29_0`: Enable support for Bitcoin Core v29.
+//! - `30_2`: Enable support for Bitcoin Core v30.2. This is enabled by default.
 //!
 //! # Usage
 //!
@@ -28,10 +29,6 @@ pub mod types;
 pub use corepc_types;
 
 pub use client::*;
-
-// v29
-#[cfg(feature = "29_0")]
-pub use client::v29;
 
 #[cfg(test)]
 pub mod test_utils;
