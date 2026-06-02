@@ -146,6 +146,25 @@ where
     }
 }
 
+/// Serializes the optional [`FeeRate`] into sat/vB.
+///
+/// Bitcoin Core's `fee_rate` option (e.g. for `walletcreatefundedpsbt` and `psbtbumpfee`) is
+/// expressed in sat/vB, while [`FeeRate`] stores its value internally in sat/kwu
+/// (250 sat/kwu = 1 sat/vB). Serializing the value as a fractional sat/vB number preserves
+/// sub-1 sat/vB fee rates.
+fn serialize_option_fee_rate<S>(
+    fee_rate: &Option<FeeRate>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match fee_rate {
+        Some(fr) => serializer.serialize_some(&(fr.to_sat_per_kwu() as f64 / 250.0)),
+        None => serializer.serialize_none(),
+    }
+}
+
 /// Deserializes the transaction id string into proper [`Txid`]s.
 fn deserialize_txid<'d, D>(deserializer: D) -> Result<Txid, D::Error>
 where
@@ -244,8 +263,13 @@ pub struct WalletCreateFundedPsbtOptions {
     ///
     /// If specified, this overrides the `conf_target` parameter for fee estimation.
     /// Must be a positive value representing the desired fee density.
-    #[serde(default, rename = "fee_rate", skip_serializing_if = "Option::is_none")]
-    pub fee_rate: Option<f64>,
+    #[serde(
+        default,
+        rename = "fee_rate",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_fee_rate"
+    )]
+    pub fee_rate: Option<FeeRate>,
 
     /// Whether to lock the selected UTXOs to prevent them from being spent by other transactions.
     ///
@@ -324,7 +348,10 @@ pub struct PsbtBumpFeeOptions {
     pub conf_target: Option<u16>,
 
     /// Fee rate in sat/vB.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_fee_rate"
+    )]
     pub fee_rate: Option<FeeRate>,
 
     /// Whether the new transaction should be BIP-125 replaceable.
@@ -342,4 +369,114 @@ pub struct PsbtBumpFeeOptions {
     /// Index of the change output to recycle from the original transaction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub original_change_index: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::{json, Value};
+
+    #[derive(Serialize)]
+    struct FeeRateOption {
+        #[serde(serialize_with = "serialize_option_fee_rate")]
+        fee_rate: Option<FeeRate>,
+    }
+
+    const MAX_REASONABLE_FEE_RATE_SAT_PER_KWU: u64 = 1_000_000_000;
+
+    fn serialized_fee_rate_sat_per_kwu(value: &Value) -> u64 {
+        let fee_rate = value["fee_rate"].as_f64().unwrap();
+        (fee_rate * 250.0).round() as u64
+    }
+
+    proptest! {
+        #[test]
+        fn serialize_option_fee_rate_roundtrips_sat_per_kwu(
+            sat_per_kwu in 0u64..=MAX_REASONABLE_FEE_RATE_SAT_PER_KWU,
+        ) {
+            let value = serde_json::to_value(FeeRateOption {
+                fee_rate: Some(FeeRate::from_sat_per_kwu(sat_per_kwu)),
+            })
+            .unwrap();
+
+            prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
+        }
+
+        #[test]
+        fn wallet_create_funded_psbt_options_roundtrips_fee_rate(
+            sat_per_kwu in 0u64..=MAX_REASONABLE_FEE_RATE_SAT_PER_KWU,
+        ) {
+            let value = serde_json::to_value(WalletCreateFundedPsbtOptions {
+                fee_rate: Some(FeeRate::from_sat_per_kwu(sat_per_kwu)),
+                ..Default::default()
+            })
+            .unwrap();
+
+            prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
+        }
+
+        #[test]
+        fn psbt_bump_fee_options_roundtrips_fee_rate(
+            sat_per_kwu in 0u64..=MAX_REASONABLE_FEE_RATE_SAT_PER_KWU,
+        ) {
+            let value = serde_json::to_value(PsbtBumpFeeOptions {
+                fee_rate: Some(FeeRate::from_sat_per_kwu(sat_per_kwu)),
+                ..Default::default()
+            })
+            .unwrap();
+
+            prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
+        }
+    }
+
+    #[test]
+    fn serialize_option_fee_rate_preserves_sub_sat_per_vb_example() {
+        let value = serde_json::to_value(FeeRateOption {
+            fee_rate: Some(FeeRate::from_sat_per_kwu(125)),
+        })
+        .unwrap();
+
+        assert_eq!(value, json!({ "fee_rate": 0.5 }));
+    }
+
+    #[test]
+    fn wallet_create_funded_psbt_options_serializes_fee_rate_as_sat_per_vb_example() {
+        let value = serde_json::to_value(WalletCreateFundedPsbtOptions {
+            fee_rate: Some(FeeRate::from_sat_per_kwu(375)),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(value, json!({ "fee_rate": 1.5 }));
+    }
+
+    #[test]
+    fn wallet_create_funded_psbt_options_skips_missing_fee_rate() {
+        let value = serde_json::to_value(WalletCreateFundedPsbtOptions {
+            lock_unspents: Some(true),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(value, json!({ "lockUnspents": true }));
+    }
+
+    #[test]
+    fn psbt_bump_fee_options_serializes_fee_rate_as_sat_per_vb_example() {
+        let value = serde_json::to_value(PsbtBumpFeeOptions {
+            fee_rate: Some(FeeRate::from_sat_per_vb(20).unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(value, json!({ "fee_rate": 20.0 }));
+    }
+
+    #[test]
+    fn serialize_option_fee_rate_serializes_none_as_null_without_skip() {
+        let value = serde_json::to_value(FeeRateOption { fee_rate: None }).unwrap();
+
+        assert_eq!(value, json!({ "fee_rate": Value::Null }));
+    }
 }
