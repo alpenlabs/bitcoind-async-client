@@ -16,7 +16,7 @@ check-fmt:
 
 # Rust `clippy` lints
 clippy:
-  cargo clippy --examples --tests --benches --all-features --all-targets --locked
+  cargo clippy --examples --tests --benches --all-targets --locked
 
 # TOML lint with `taplo`
 toml-lint:
@@ -28,11 +28,11 @@ toml-check-fmt:
 
 # Rust unit tests with `cargo-nextest`
 unit-test:
-  cargo --locked nextest run --all-features
+  cargo --locked nextest run
 
 # Rust documentation tests
 doctest:
-  cargo test --doc --all-features
+  cargo test --doc
 
 # Run all lints and formatting checks
 lints: toml-check-fmt toml-lint check-fmt clippy
