@@ -1,9 +1,9 @@
 use bitcoin::{bip32::Xpriv, block::Header, Address, Block, BlockHash, Network, Transaction, Txid};
 use corepc_types::model::{
-    GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempool, GetRawMempoolVerbose,
-    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ListTransactions,
-    ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept,
-    WalletCreateFundedPsbt, WalletProcessPsbt,
+    EstimateSmartFee, GetAddressInfo, GetBlockchainInfo, GetMempoolInfo, GetRawMempool,
+    GetRawMempoolVerbose, GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut,
+    ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet, SubmitPackage,
+    TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
 };
 use corepc_types::v29::ImportDescriptors;
 use std::future::Future;
@@ -29,9 +29,9 @@ use crate::{
 /// consider wrapping with [`tokio`](https://tokio.rs)'s
 /// [`spawn_blocking`](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html) or any other method.
 pub trait Reader {
-    /// Estimates the approximate fee per kilobyte needed for a transaction
-    /// to begin confirmation within conf_target blocks if possible and return
-    /// the number of blocks for which the estimate is valid.
+    /// Estimates the approximate fee rate needed for a transaction to begin
+    /// confirmation within `conf_target` blocks if possible, returning the
+    /// number of blocks for which the estimate is valid.
     ///
     /// # Parameters
     ///
@@ -45,10 +45,15 @@ pub trait Reader {
     ///
     /// By default uses the estimate mode of `CONSERVATIVE` which is the
     /// default in Bitcoin Core v27.
+    ///
+    /// The returned [`EstimateSmartFee::fee_rate`] is a [`bitcoin::FeeRate`],
+    /// which can represent sub-1 sat/vB rates. It is `None` (with
+    /// [`EstimateSmartFee::errors`] populated) when Bitcoin Core has
+    /// insufficient data to produce an estimate.
     fn estimate_smart_fee(
         &self,
         conf_target: u16,
-    ) -> impl Future<Output = ClientResult<u64>> + Send;
+    ) -> impl Future<Output = ClientResult<EstimateSmartFee>> + Send;
 
     /// Gets a [`Header`] with the given hash.
     fn get_block_header(

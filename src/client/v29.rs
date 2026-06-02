@@ -10,13 +10,13 @@ use bitcoin::{
 };
 use corepc_types::model;
 use corepc_types::v29::{
-    CreateWallet, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne, GetBlockVerboseZero,
-    GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool, GetRawMempoolVerbose,
-    GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut, ImportDescriptors,
-    ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee, SignRawTransactionWithWallet,
-    SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt, WalletProcessPsbt,
+    CreateWallet, EstimateSmartFee, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne,
+    GetBlockVerboseZero, GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool,
+    GetRawMempoolVerbose, GetRawTransaction, GetRawTransactionVerbose, GetTransaction, GetTxOut,
+    ImportDescriptors, ListDescriptors, ListTransactions, ListUnspent, PsbtBumpFee,
+    SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
+    WalletProcessPsbt,
 };
-use serde_json::value::{RawValue, Value};
 use tracing::*;
 
 use crate::{
@@ -32,34 +32,14 @@ use crate::{
     ClientResult,
 };
 
-/// Minimum relay fee rate: 1 sat/vB = 0.00001 BTC/kvB
-const MIN_FEE_RATE_BTC_VKB: f64 = 0.00001;
-
 impl Reader for Client {
-    async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<u64> {
-        let result = self
-            .call::<Box<RawValue>>("estimatesmartfee", &[to_value(conf_target)?])
-            .await?
-            .to_string();
+    async fn estimate_smart_fee(&self, conf_target: u16) -> ClientResult<model::EstimateSmartFee> {
+        let resp = self
+            .call::<EstimateSmartFee>("estimatesmartfee", &[to_value(conf_target)?])
+            .await?;
 
-        let result_map: Value = result.parse::<Value>()?;
-
-        let btc_vkb = result_map
-            .get("feerate")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(MIN_FEE_RATE_BTC_VKB); // Default to minimum if missing or invalid
-
-        // Ensure fee rate is positive and non-zero
-        if btc_vkb <= 0.0 {
-            return Err(ClientError::Other(
-                "Invalid fee rate: must be positive".to_string(),
-            ));
-        }
-
-        // Convert BTC/vB to sat/vB
-        let sat_vb = (btc_vkb * 100_000_000.0 / 1_000.0) as u64;
-
-        Ok(sat_vb)
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
     async fn get_block_header(&self, hash: &BlockHash) -> ClientResult<Header> {
@@ -487,10 +467,13 @@ impl Signer for Client {
 #[cfg(test)]
 mod test {
 
-    use std::sync::Once;
+    use std::{env, sync::Once, time::Duration};
 
     use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
+    use corepc_node::{Conf, Node, P2P};
     use corepc_types::v29::ImportDescriptorsResult;
+    use serde_json::Value;
+    use tokio::time::sleep;
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     use super::*;
@@ -503,6 +486,21 @@ mod test {
     /// 50 BTC in [`Network::Regtest`].
     const COINBASE_AMOUNT: Amount = Amount::from_sat(50 * 100_000_000);
 
+    /// Number of confirmation rounds needed for Bitcoin Core to produce a fee estimate on regtest.
+    const FEE_ESTIMATION_BLOCKS: usize = 5;
+
+    /// Number of relayed transactions included in each fee-estimation training block.
+    const FEE_ESTIMATION_TXS_PER_BLOCK: usize = 5;
+
+    /// Fee rate used for the transactions that train Bitcoin Core's fee estimator.
+    const FEE_ESTIMATION_FEE_RATE: FeeRate = FeeRate::from_sat_per_kwu(500);
+
+    /// Maximum polling attempts while waiting for regtest P2P relay/validation in CI.
+    const FEE_ESTIMATION_WAIT_ATTEMPTS: usize = 1_200;
+
+    /// Polling interval for fee-estimation setup waits.
+    const FEE_ESTIMATION_WAIT_INTERVAL: Duration = Duration::from_millis(50);
+
     /// Only attempts to start tracing once.
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -514,6 +512,96 @@ mod test {
                 .try_init()
                 .ok();
         });
+    }
+
+    /// Starts two P2P-connected regtest nodes and returns a client for the node under test.
+    fn get_p2p_bitcoind_and_client() -> (Node, Node, Client) {
+        unsafe {
+            env::set_var("BITCOIN_XPRIV_RETRIEVABLE", "true");
+        }
+
+        let mut estimator_conf = Conf::default();
+        estimator_conf.args.push("-txindex=1");
+        estimator_conf.p2p = P2P::Yes;
+        let estimator = Node::from_downloaded_with_conf(&estimator_conf).unwrap();
+
+        let mut broadcaster_conf = Conf::default();
+        broadcaster_conf.args.push("-txindex=1");
+        broadcaster_conf.p2p = estimator.p2p_connect(false).unwrap();
+        let broadcaster = Node::from_downloaded_with_conf(&broadcaster_conf).unwrap();
+
+        let client = Client::new(
+            estimator.rpc_url(),
+            Auth::CookieFile(estimator.params.cookie_file.clone()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        (estimator, broadcaster, client)
+    }
+
+    /// Waits until the async client observes the expected block height.
+    async fn wait_for_block_count(client: &Client, expected: u64) {
+        for _ in 0..FEE_ESTIMATION_WAIT_ATTEMPTS {
+            if client.get_block_count().await.unwrap() == expected {
+                return;
+            }
+            sleep(FEE_ESTIMATION_WAIT_INTERVAL).await;
+        }
+        panic!("timed out waiting for block height {expected}");
+    }
+
+    /// Waits until the async client observes at least the expected number of mempool transactions.
+    async fn wait_for_mempool_len(client: &Client, expected: usize) {
+        for _ in 0..FEE_ESTIMATION_WAIT_ATTEMPTS {
+            if client.get_raw_mempool().await.unwrap().0.len() >= expected {
+                return;
+            }
+            sleep(FEE_ESTIMATION_WAIT_INTERVAL).await;
+        }
+        panic!("timed out waiting for {expected} transactions in mempool");
+    }
+
+    /// Builds enough observed relay-and-confirmation history for `estimatesmartfee` to return a fee rate.
+    async fn populate_fee_estimation_history(
+        estimator: &Node,
+        broadcaster: &Node,
+        estimator_client: &Client,
+    ) {
+        let funding_address = broadcaster.client.new_address().unwrap();
+        mine_blocks(broadcaster, 101, Some(funding_address)).unwrap();
+        wait_for_block_count(estimator_client, 101).await;
+
+        for _ in 0..FEE_ESTIMATION_BLOCKS {
+            for _ in 0..FEE_ESTIMATION_TXS_PER_BLOCK {
+                let address = broadcaster.client.new_address().unwrap();
+                let txid = broadcaster
+                    .client
+                    .call::<String>(
+                        "sendtoaddress",
+                        &[
+                            to_value(address.to_string()).unwrap(),
+                            to_value(0.1).unwrap(),
+                            to_value("").unwrap(),
+                            to_value("").unwrap(),
+                            to_value(false).unwrap(),
+                            to_value(true).unwrap(),
+                            Value::Null,
+                            to_value("unset").unwrap(),
+                            Value::Null,
+                            to_value(FEE_ESTIMATION_FEE_RATE.to_sat_per_kwu() as f64 / 250.0)
+                                .unwrap(),
+                        ],
+                    )
+                    .unwrap();
+                txid.parse::<Txid>().unwrap();
+            }
+
+            wait_for_mempool_len(estimator_client, FEE_ESTIMATION_TXS_PER_BLOCK).await;
+            mine_blocks(estimator, 1, None).unwrap();
+        }
     }
 
     #[tokio::test()]
@@ -622,11 +710,6 @@ mod test {
         assert!(got.loaded.unwrap_or(false));
         assert_eq!(got.size, 1);
         assert_eq!(got.unbroadcast_count, Some(1));
-
-        // estimate_smart_fee
-        let got = client.estimate_smart_fee(1).await.unwrap();
-        let expected = 1; // 1 sat/vB
-        assert_eq!(expected, got);
 
         // sign_raw_transaction_with_wallet
         let got = client
@@ -800,6 +883,19 @@ mod test {
         let tx = finalized_psbt.hex.unwrap();
         assert!(!tx.input.is_empty());
         assert!(!tx.output.is_empty());
+    }
+
+    #[tokio::test()]
+    async fn estimate_smart_fee_returns_fee_rate_after_observed_regtest_history() {
+        init_tracing();
+
+        let (estimator, broadcaster, client) = get_p2p_bitcoind_and_client();
+        populate_fee_estimation_history(&estimator, &broadcaster, &client).await;
+
+        let got = client.estimate_smart_fee(1).await.unwrap();
+        assert_eq!(got.fee_rate, Some(FEE_ESTIMATION_FEE_RATE));
+        assert!(got.errors.is_none());
+        assert_eq!(got.blocks, 2);
     }
 
     #[tokio::test()]
@@ -1140,7 +1236,7 @@ mod test {
 
         // Test psbt_bump_fee with custom fee rate
         let options = PsbtBumpFeeOptions {
-            fee_rate: Some(FeeRate::from_sat_per_kwu(20)), // 20 sat/vB - higher than default
+            fee_rate: Some(FeeRate::from_sat_per_vb(20).unwrap()), // 20 sat/vB - higher than default
             ..Default::default()
         };
         trace!(?options, "Calling psbt_bump_fee");
