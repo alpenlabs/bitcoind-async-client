@@ -184,7 +184,7 @@ impl Client {
     ) -> ClientResult<T> {
         let mut retries = 0;
         loop {
-            trace!(%method, ?params, %retries, "Calling bitcoin client");
+            debug!(%method, ?params, %retries, "Calling bitcoin client");
 
             let id = self.next_id();
 
