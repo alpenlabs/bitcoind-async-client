@@ -12,6 +12,7 @@ use std::{
 
 use crate::error::{BitcoinRpcError, ClientError};
 use base64::{engine::general_purpose, Engine};
+use bitcoin::{Amount, FeeRate};
 use bitreq::{post, Client as BitreqClient, Error as BitreqError};
 use serde::{de, Deserialize, Serialize};
 use serde_json::{json, value::Value};
@@ -51,6 +52,31 @@ where
 {
     serde_json::to_value(value)
         .map_err(|e| ClientError::Param(format!("Error creating value: {e}")))
+}
+
+pub(crate) fn push_broadcast_options(
+    params: &mut Vec<Value>,
+    max_fee_rate: Option<FeeRate>,
+    max_burn_amount: Option<Amount>,
+) -> ClientResult<()> {
+    if max_fee_rate.is_none() && max_burn_amount.is_none() {
+        return Ok(());
+    }
+
+    match max_fee_rate {
+        Some(max_fee_rate) => params.push(to_value(max_fee_rate_btc_per_kvb(max_fee_rate))?),
+        None => params.push(Value::Null),
+    }
+
+    if let Some(max_burn_amount) = max_burn_amount {
+        params.push(to_value(max_burn_amount.to_btc())?);
+    }
+
+    Ok(())
+}
+
+fn max_fee_rate_btc_per_kvb(max_fee_rate: FeeRate) -> f64 {
+    max_fee_rate.to_sat_per_kwu() as f64 / 25_000_000.0
 }
 
 /// The different authentication methods for the client.
@@ -319,6 +345,52 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn push_broadcast_options_omits_empty_options() {
+        let mut params = vec![json!("rawtx")];
+
+        push_broadcast_options(&mut params, None, None).unwrap();
+
+        assert_eq!(params, vec![json!("rawtx")]);
+    }
+
+    #[test]
+    fn push_broadcast_options_adds_max_fee_rate_only() {
+        let mut params = vec![json!("rawtx")];
+
+        push_broadcast_options(
+            &mut params,
+            Some(FeeRate::from_sat_per_kwu(25_000_000)),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(params, vec![json!("rawtx"), json!(1.0)]);
+    }
+
+    #[test]
+    fn push_broadcast_options_adds_null_placeholder_for_max_burn_amount_only() {
+        let mut params = vec![json!("rawtx")];
+
+        push_broadcast_options(&mut params, None, Some(Amount::from_sat(50_000))).unwrap();
+
+        assert_eq!(params, vec![json!("rawtx"), Value::Null, json!(0.0005)]);
+    }
+
+    #[test]
+    fn push_broadcast_options_adds_max_fee_rate_and_max_burn_amount() {
+        let mut params = vec![json!("rawtx")];
+
+        push_broadcast_options(
+            &mut params,
+            Some(FeeRate::from_sat_per_kwu(12_500_000)),
+            Some(Amount::from_sat(25_000)),
+        )
+        .unwrap();
+
+        assert_eq!(params, vec![json!("rawtx"), json!(0.5), json!(0.00025)]);
+    }
 
     async fn read_http_request(stream: &mut TcpStream) {
         let mut buf = vec![0u8; 4096];
