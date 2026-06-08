@@ -483,7 +483,10 @@ mod test {
 
     use std::{env, sync::Once, time::Duration};
 
-    use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
+    use bitcoin::{
+        hashes::Hash, opcodes::all::OP_RETURN, script::Builder, transaction, Amount, FeeRate,
+        NetworkKind,
+    };
     use corepc_node::{Conf, Node, P2P};
     use corepc_types::v30::ImportDescriptorsResult;
     use serde_json::Value;
@@ -910,6 +913,69 @@ mod test {
         assert_eq!(got.fee_rate, Some(FEE_ESTIMATION_FEE_RATE));
         assert!(got.errors.is_none());
         assert_eq!(got.blocks, 2);
+    }
+
+    #[tokio::test()]
+    async fn send_raw_transaction_accepts_explicit_max_burn_amount() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+
+        let blocks = mine_blocks(bitcoind, 101, None).unwrap();
+        let spendable_block = client.get_block(blocks.first().unwrap()).await.unwrap();
+        let coinbase_tx = spendable_block.coinbase().unwrap();
+
+        let burn_amount = Amount::from_sat(1_000);
+        let fee = Amount::from_sat(10_000);
+        let change_amount = COINBASE_AMOUNT - burn_amount - fee;
+        let burn_address = client.get_new_address().await.unwrap();
+        let change_address = client.get_new_address().await.unwrap();
+        let raw_tx = CreateRawTransactionArguments {
+            inputs: vec![CreateRawTransactionInput {
+                txid: coinbase_tx.compute_txid().to_string(),
+                vout: 0,
+            }],
+            outputs: vec![
+                CreateRawTransactionOutput::AddressAmount {
+                    address: burn_address.to_string(),
+                    amount: burn_amount.to_btc(),
+                },
+                CreateRawTransactionOutput::AddressAmount {
+                    address: change_address.to_string(),
+                    amount: change_amount.to_btc(),
+                },
+            ],
+        };
+        let mut tx = client.create_raw_transaction(raw_tx).await.unwrap();
+        tx.output[0].script_pubkey = Builder::new()
+            .push_opcode(OP_RETURN)
+            .push_slice([1u8; 32])
+            .into_script();
+
+        let signed_tx = client
+            .sign_raw_transaction_with_wallet(&tx, None)
+            .await
+            .unwrap()
+            .tx;
+
+        let rejected = client.send_raw_transaction(&signed_tx, None).await;
+        assert!(
+            rejected.is_err(),
+            "default maxburnamount should reject a nonzero OP_RETURN output"
+        );
+
+        let txid = client
+            .send_raw_transaction(
+                &signed_tx,
+                Some(SendRawTransactionOptions {
+                    max_burn_amount: Some(burn_amount),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(txid, signed_tx.compute_txid());
     }
 
     #[tokio::test()]
