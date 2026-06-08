@@ -135,6 +135,34 @@ pub struct CreateWalletArguments {
     pub load_on_startup: Option<bool>,
 }
 
+/// Options for the `sendrawtransaction` RPC method.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SendRawTransactionOptions {
+    /// Reject transactions whose fee rate is higher than this value.
+    ///
+    /// Bitcoin Core expects this value as BTC/kvB.
+    pub max_fee_rate: Option<FeeRate>,
+
+    /// Reject transactions whose provably unspendable outputs exceed this amount.
+    ///
+    /// Bitcoin Core expects this value as BTC.
+    pub max_burn_amount: Option<Amount>,
+}
+
+/// Options for the `submitpackage` RPC method.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubmitPackageOptions {
+    /// Reject transactions whose fee rate is higher than this value.
+    ///
+    /// Bitcoin Core expects this value as BTC/kvB.
+    pub max_fee_rate: Option<FeeRate>,
+
+    /// Reject transactions whose provably unspendable outputs exceed this amount.
+    ///
+    /// Bitcoin Core expects this value as BTC.
+    pub max_burn_amount: Option<Amount>,
+}
+
 /// Serializes the optional [`Amount`] into BTC.
 fn serialize_option_bitcoin<S>(amount: &Option<Amount>, serializer: S) -> Result<S::Ok, S::Error>
 where
