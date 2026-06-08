@@ -13,7 +13,7 @@ use crate::{
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
-        WalletCreateFundedPsbtOptions,
+        SendRawTransactionOptions, SubmitPackageOptions, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -147,9 +147,11 @@ pub trait Broadcaster {
     ///
     /// - `tx`: The raw transaction to send. This should be a byte array containing the serialized
     ///   raw transaction data.
+    /// - `options`: Optional broadcast policy controls for maximum fee rate and burn amount.
     fn send_raw_transaction(
         &self,
         tx: &Transaction,
+        options: Option<SendRawTransactionOptions>,
     ) -> impl Future<Output = ClientResult<Txid>> + Send;
 
     /// Tests if a raw transaction is valid.
@@ -171,6 +173,7 @@ pub trait Broadcaster {
     fn submit_package(
         &self,
         txs: &[Transaction],
+        options: Option<SubmitPackageOptions>,
     ) -> impl Future<Output = ClientResult<SubmitPackage>> + Send;
 }
 
