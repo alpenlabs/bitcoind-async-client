@@ -22,12 +22,13 @@ use tracing::*;
 use crate::{
     client::Client,
     error::ClientError,
-    to_value,
+    push_broadcast_options, to_value,
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
         CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
         CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbtOptions,
+        PreviousTransactionOutput, PsbtBumpFeeOptions, SendRawTransactionOptions, SighashType,
+        SubmitPackageOptions, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -187,13 +188,19 @@ impl Reader for Client {
 }
 
 impl Broadcaster for Client {
-    async fn send_raw_transaction(&self, tx: &Transaction) -> ClientResult<Txid> {
+    async fn send_raw_transaction(
+        &self,
+        tx: &Transaction,
+        options: Option<SendRawTransactionOptions>,
+    ) -> ClientResult<Txid> {
         let txstr = serialize_hex(tx);
         trace!(txstr = %txstr, "Sending raw transaction");
-        match self
-            .call::<Txid>("sendrawtransaction", &[to_value(txstr)?])
-            .await
-        {
+        let mut params = vec![to_value(txstr)?];
+        if let Some(options) = options {
+            push_broadcast_options(&mut params, options.max_fee_rate, options.max_burn_amount)?;
+        }
+
+        match self.call::<Txid>("sendrawtransaction", &params).await {
             Ok(txid) => {
                 trace!(?txid, "Transaction sent");
                 Ok(txid)
@@ -219,11 +226,18 @@ impl Broadcaster for Client {
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
+    async fn submit_package(
+        &self,
+        txs: &[Transaction],
+        options: Option<SubmitPackageOptions>,
+    ) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
-        let resp = self
-            .call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
-            .await?;
+        let mut params = vec![to_value(txstrs)?];
+        if let Some(options) = options {
+            push_broadcast_options(&mut params, options.max_fee_rate, options.max_burn_amount)?;
+        }
+
+        let resp = self.call::<SubmitPackage>("submitpackage", &params).await?;
         trace!(?resp, "Got submit package response");
 
         resp.into_model()
@@ -479,7 +493,7 @@ mod test {
     use super::*;
     use crate::{
         test_utils::corepc_node_helpers::{get_bitcoind_and_client, mine_blocks},
-        types::{CreateRawTransactionInput, CreateRawTransactionOutput},
+        types::{CreateRawTransactionInput, CreateRawTransactionOutput, SendRawTransactionOptions},
         Auth,
     };
 
@@ -673,7 +687,7 @@ mod test {
 
         // get_transaction
         let tx = client.get_transaction(&txid).await.unwrap().tx;
-        let got = client.send_raw_transaction(&tx).await.unwrap();
+        let got = client.send_raw_transaction(&tx, None).await.unwrap();
         let expected = txid; // Don't touch this!
         assert_eq!(expected, got);
 
@@ -735,7 +749,7 @@ mod test {
         );
 
         // send_raw_transaction
-        let got = client.send_raw_transaction(&tx).await.unwrap();
+        let got = client.send_raw_transaction(&tx, None).await.unwrap();
         assert!(got.as_byte_array().len() == 32);
 
         // list_transactions
@@ -992,7 +1006,10 @@ mod test {
             .tx;
 
         // sanity check
-        let parent_submitted = client.send_raw_transaction(&signed_parent).await.unwrap();
+        let parent_submitted = client
+            .send_raw_transaction(&signed_parent, None)
+            .await
+            .unwrap();
 
         let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
@@ -1016,7 +1033,7 @@ mod test {
 
         // Ok now we have a parent and a child transaction.
         let result = client
-            .submit_package(&[signed_parent, signed_child])
+            .submit_package(&[signed_parent, signed_child], None)
             .await
             .unwrap();
         assert_eq!(result.tx_results.len(), 2);
@@ -1067,7 +1084,7 @@ mod test {
         assert_eq!(signed_parent.version, transaction::Version(3));
 
         // Assert that the parent tx cannot be broadcasted.
-        let parent_broadcasted = client.send_raw_transaction(&signed_parent).await;
+        let parent_broadcasted = client.send_raw_transaction(&signed_parent, None).await;
         assert!(parent_broadcasted.is_err());
 
         // 5k sats as fees.
@@ -1102,12 +1119,12 @@ mod test {
         assert_eq!(signed_child.version, transaction::Version(3));
 
         // Assert that the child tx cannot be broadcasted.
-        let child_broadcasted = client.send_raw_transaction(&signed_child).await;
+        let child_broadcasted = client.send_raw_transaction(&signed_child, None).await;
         assert!(child_broadcasted.is_err());
 
         // Let's send as a package 1C1P.
         let result = client
-            .submit_package(&[signed_parent, signed_child])
+            .submit_package(&[signed_parent, signed_child], None)
             .await
             .unwrap();
         assert_eq!(result.tx_results.len(), 2);
