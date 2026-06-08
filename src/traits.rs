@@ -167,6 +167,11 @@ pub trait Broadcaster {
     /// interface may be unstable. Refer to doc/policy/packages.md for documentation on package
     /// policies.
     ///
+    /// # Parameters
+    ///
+    /// - `txs`: The transactions to submit as a package.
+    /// - `options`: Optional package policy controls for maximum fee rate and burn amount.
+    ///
     /// # Warning
     ///
     /// Successful submission does not mean the transactions will propagate throughout the network.

@@ -496,7 +496,10 @@ mod test {
     use super::*;
     use crate::{
         test_utils::corepc_node_helpers::{get_bitcoind_and_client, mine_blocks},
-        types::{CreateRawTransactionInput, CreateRawTransactionOutput, SendRawTransactionOptions},
+        types::{
+            CreateRawTransactionInput, CreateRawTransactionOutput, SendRawTransactionOptions,
+            SubmitPackageOptions,
+        },
         Auth,
     };
 
@@ -915,12 +918,10 @@ mod test {
         assert_eq!(got.blocks, 2);
     }
 
-    #[tokio::test()]
-    async fn send_raw_transaction_accepts_explicit_max_burn_amount() {
-        init_tracing();
-
-        let (bitcoind, client) = get_bitcoind_and_client();
-
+    async fn signed_op_return_burn_transaction(
+        bitcoind: &Node,
+        client: &Client,
+    ) -> (Transaction, Amount) {
         let blocks = mine_blocks(bitcoind, 101, None).unwrap();
         let spendable_block = client.get_block(blocks.first().unwrap()).await.unwrap();
         let coinbase_tx = spendable_block.coinbase().unwrap();
@@ -958,6 +959,16 @@ mod test {
             .unwrap()
             .tx;
 
+        (signed_tx, burn_amount)
+    }
+
+    #[tokio::test()]
+    async fn send_raw_transaction_accepts_explicit_max_burn_amount() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+        let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
+
         let rejected = client.send_raw_transaction(&signed_tx, None).await;
         assert!(
             rejected.is_err(),
@@ -976,6 +987,34 @@ mod test {
             .unwrap();
 
         assert_eq!(txid, signed_tx.compute_txid());
+    }
+
+    #[tokio::test()]
+    async fn submit_package_accepts_explicit_max_burn_amount() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+        let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
+
+        let rejected = client.submit_package(&[signed_tx.clone()], None).await;
+        assert!(
+            rejected.is_err(),
+            "default maxburnamount should reject a package with a nonzero OP_RETURN output"
+        );
+
+        let result = client
+            .submit_package(
+                &[signed_tx],
+                Some(SubmitPackageOptions {
+                    max_burn_amount: Some(burn_amount),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.package_msg, "success");
+        assert_eq!(result.tx_results.len(), 1);
     }
 
     #[tokio::test()]
