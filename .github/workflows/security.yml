@@ -31,7 +31,8 @@ jobs:
           cache-on-failure: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --force --locked
+        # NOTE: version 0.22.1 is the latest compatible with MSRV 1.85
+        run: cargo install cargo-audit --force --locked --version "0.22.1"
 
       - name: Check for audit warnings
         run: cargo audit -D warnings
