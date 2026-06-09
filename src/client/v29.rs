@@ -22,13 +22,13 @@ use tracing::*;
 use crate::{
     client::Client,
     error::ClientError,
-    push_broadcast_options, to_value,
+    to_value,
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
-        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFeeOptions, SendRawTransactionOptions, SighashType,
-        SubmitPackageOptions, WalletCreateFundedPsbtOptions,
+        BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
+        CreateRawTransactionOutput, CreateWalletArguments, ImportDescriptorInput,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
+        SendRawTransactionOptions, SighashType, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -197,7 +197,7 @@ impl Broadcaster for Client {
         trace!(txstr = %txstr, "Sending raw transaction");
         let mut params = vec![to_value(txstr)?];
         if let Some(options) = options {
-            push_broadcast_options(&mut params, options.max_fee_rate, options.max_burn_amount)?;
+            params.extend(options.to_params());
         }
 
         match self.call::<Txid>("sendrawtransaction", &params).await {
@@ -229,12 +229,12 @@ impl Broadcaster for Client {
     async fn submit_package(
         &self,
         txs: &[Transaction],
-        options: Option<SubmitPackageOptions>,
+        options: Option<BroadcastOptions>,
     ) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
         let mut params = vec![to_value(txstrs)?];
         if let Some(options) = options {
-            push_broadcast_options(&mut params, options.max_fee_rate, options.max_burn_amount)?;
+            params.extend(options.to_params());
         }
 
         let resp = self.call::<SubmitPackage>("submitpackage", &params).await?;
@@ -495,10 +495,12 @@ mod test {
 
     use super::*;
     use crate::{
-        test_utils::corepc_node_helpers::{get_bitcoind_and_client, mine_blocks},
+        test_utils::corepc_node_helpers::{
+            assert_max_burn_amount_rejected, get_bitcoind_and_client, mine_blocks,
+        },
         types::{
-            CreateRawTransactionInput, CreateRawTransactionOutput, SendRawTransactionOptions,
-            SubmitPackageOptions,
+            BroadcastOptions, CreateRawTransactionInput, CreateRawTransactionOutput,
+            SendRawTransactionOptions,
         },
         Auth,
     };
@@ -970,10 +972,7 @@ mod test {
         let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
 
         let rejected = client.send_raw_transaction(&signed_tx, None).await;
-        assert!(
-            rejected.is_err(),
-            "default maxburnamount should reject a nonzero OP_RETURN output"
-        );
+        assert_max_burn_amount_rejected(rejected, "sendrawtransaction");
 
         let txid = client
             .send_raw_transaction(
@@ -997,15 +996,12 @@ mod test {
         let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
 
         let rejected = client.submit_package(&[signed_tx.clone()], None).await;
-        assert!(
-            rejected.is_err(),
-            "default maxburnamount should reject a package with a nonzero OP_RETURN output"
-        );
+        assert_max_burn_amount_rejected(rejected, "submitpackage");
 
         let result = client
             .submit_package(
                 &[signed_tx],
-                Some(SubmitPackageOptions {
+                Some(BroadcastOptions {
                     max_burn_amount: Some(burn_amount),
                     ..Default::default()
                 }),

@@ -11,9 +11,9 @@ use std::future::Future;
 use crate::types::{ImportDescriptorInput, SighashType};
 use crate::{
     types::{
-        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
-        SendRawTransactionOptions, SubmitPackageOptions, WalletCreateFundedPsbtOptions,
+        BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
+        CreateRawTransactionOutput, ListUnspentQueryOptions, PreviousTransactionOutput,
+        PsbtBumpFeeOptions, SendRawTransactionOptions, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -178,7 +178,7 @@ pub trait Broadcaster {
     fn submit_package(
         &self,
         txs: &[Transaction],
-        options: Option<SubmitPackageOptions>,
+        options: Option<BroadcastOptions>,
     ) -> impl Future<Output = ClientResult<SubmitPackage>> + Send;
 }
 

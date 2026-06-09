@@ -5,6 +5,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
+use serde_json::Value;
 
 /// Models the arguments of JSON-RPC method `createrawtransaction`.
 ///
@@ -135,33 +136,48 @@ pub struct CreateWalletArguments {
     pub load_on_startup: Option<bool>,
 }
 
+/// Shared options for transaction broadcast RPC methods.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BroadcastOptions {
+    /// Reject transactions whose fee rate is higher than this value.
+    ///
+    /// Bitcoin Core expects this value as BTC/kvB.
+    pub max_fee_rate: Option<FeeRate>,
+
+    /// Reject transactions whose provably unspendable outputs exceed this amount.
+    ///
+    /// Bitcoin Core expects this value as BTC.
+    pub max_burn_amount: Option<Amount>,
+}
+
+impl BroadcastOptions {
+    /// Converts these options to positional Bitcoin Core RPC parameters.
+    pub fn to_params(&self) -> impl IntoIterator<Item = Value> {
+        let mut params = Vec::new();
+
+        if self.max_fee_rate.is_none() && self.max_burn_amount.is_none() {
+            return params;
+        }
+
+        match self.max_fee_rate {
+            Some(max_fee_rate) => params.push(Value::from(max_fee_rate_btc_per_kvb(max_fee_rate))),
+            None => params.push(Value::Null),
+        }
+
+        if let Some(max_burn_amount) = self.max_burn_amount {
+            params.push(Value::from(max_burn_amount.to_btc()));
+        }
+
+        params
+    }
+}
+
+fn max_fee_rate_btc_per_kvb(max_fee_rate: FeeRate) -> f64 {
+    max_fee_rate.to_sat_per_kwu() as f64 / 25_000_000.0
+}
+
 /// Options for the `sendrawtransaction` RPC method.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SendRawTransactionOptions {
-    /// Reject transactions whose fee rate is higher than this value.
-    ///
-    /// Bitcoin Core expects this value as BTC/kvB.
-    pub max_fee_rate: Option<FeeRate>,
-
-    /// Reject transactions whose provably unspendable outputs exceed this amount.
-    ///
-    /// Bitcoin Core expects this value as BTC.
-    pub max_burn_amount: Option<Amount>,
-}
-
-/// Options for the `submitpackage` RPC method.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SubmitPackageOptions {
-    /// Reject transactions whose fee rate is higher than this value.
-    ///
-    /// Bitcoin Core expects this value as BTC/kvB.
-    pub max_fee_rate: Option<FeeRate>,
-
-    /// Reject transactions whose provably unspendable outputs exceed this amount.
-    ///
-    /// Bitcoin Core expects this value as BTC.
-    pub max_burn_amount: Option<Amount>,
-}
+pub type SendRawTransactionOptions = BroadcastOptions;
 
 /// Serializes the optional [`Amount`] into BTC.
 fn serialize_option_bitcoin<S>(amount: &Option<Amount>, serializer: S) -> Result<S::Ok, S::Error>
@@ -456,6 +472,55 @@ mod tests {
 
             prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
         }
+    }
+
+    #[test]
+    fn broadcast_options_to_params_omits_empty_options() {
+        let params: Vec<_> = BroadcastOptions::default()
+            .to_params()
+            .into_iter()
+            .collect();
+
+        assert_eq!(params, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn broadcast_options_to_params_adds_max_fee_rate_only() {
+        let params: Vec<_> = BroadcastOptions {
+            max_fee_rate: Some(FeeRate::from_sat_per_kwu(25_000_000)),
+            max_burn_amount: None,
+        }
+        .to_params()
+        .into_iter()
+        .collect();
+
+        assert_eq!(params, vec![json!(1.0)]);
+    }
+
+    #[test]
+    fn broadcast_options_to_params_adds_null_placeholder_for_max_burn_amount_only() {
+        let params: Vec<_> = BroadcastOptions {
+            max_fee_rate: None,
+            max_burn_amount: Some(Amount::from_sat(50_000)),
+        }
+        .to_params()
+        .into_iter()
+        .collect();
+
+        assert_eq!(params, vec![Value::Null, json!(0.0005)]);
+    }
+
+    #[test]
+    fn broadcast_options_to_params_adds_max_fee_rate_and_max_burn_amount() {
+        let params: Vec<_> = BroadcastOptions {
+            max_fee_rate: Some(FeeRate::from_sat_per_kwu(12_500_000)),
+            max_burn_amount: Some(Amount::from_sat(25_000)),
+        }
+        .to_params()
+        .into_iter()
+        .collect();
+
+        assert_eq!(params, vec![json!(0.5), json!(0.00025)]);
     }
 
     #[test]
