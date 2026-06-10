@@ -5,7 +5,7 @@ pub mod corepc_node_helpers {
     use bitcoin::{Address, BlockHash};
     use corepc_node::{Conf, Node};
 
-    use crate::{Auth, Client};
+    use crate::{error::ClientError, Auth, Client, ClientResult};
 
     /// Get the authentication credentials for a given `bitcoind` instance.
     fn get_auth(bitcoind: &Node) -> Auth {
@@ -45,5 +45,16 @@ pub mod corepc_node_helpers {
         let url = bitcoind.rpc_url();
         let client = Client::new(url, get_auth(&bitcoind), None, None, None).unwrap();
         (bitcoind, client)
+    }
+
+    pub fn assert_max_burn_amount_rejected<T>(result: ClientResult<T>, method: &str) {
+        match result {
+            Err(ClientError::Server(_, message)) => assert!(
+                message.contains("maxburnamount") || message.contains("max-burn-amount"),
+                "{method} should reject the default maxburnamount, got: {message}"
+            ),
+            Err(error) => panic!("{method} returned an unexpected error: {error:?}"),
+            Ok(_) => panic!("{method} unexpectedly accepted a nonzero OP_RETURN output"),
+        }
     }
 }
