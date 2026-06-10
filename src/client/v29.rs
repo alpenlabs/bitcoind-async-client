@@ -25,9 +25,10 @@ use crate::{
     to_value,
     traits::{Broadcaster, Reader, Signer, Wallet},
     types::{
-        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        CreateWalletArguments, ImportDescriptorInput, ListUnspentQueryOptions,
-        PreviousTransactionOutput, PsbtBumpFeeOptions, SighashType, WalletCreateFundedPsbtOptions,
+        BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
+        CreateRawTransactionOutput, CreateWalletArguments, ImportDescriptorInput,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
+        SendRawTransactionOptions, SighashType, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -187,13 +188,19 @@ impl Reader for Client {
 }
 
 impl Broadcaster for Client {
-    async fn send_raw_transaction(&self, tx: &Transaction) -> ClientResult<Txid> {
+    async fn send_raw_transaction(
+        &self,
+        tx: &Transaction,
+        options: Option<SendRawTransactionOptions>,
+    ) -> ClientResult<Txid> {
         let txstr = serialize_hex(tx);
         trace!(txstr = %txstr, "Sending raw transaction");
-        match self
-            .call::<Txid>("sendrawtransaction", &[to_value(txstr)?])
-            .await
-        {
+        let mut params = vec![to_value(txstr)?];
+        if let Some(options) = options {
+            params.extend(options.to_params());
+        }
+
+        match self.call::<Txid>("sendrawtransaction", &params).await {
             Ok(txid) => {
                 trace!(?txid, "Transaction sent");
                 Ok(txid)
@@ -219,11 +226,18 @@ impl Broadcaster for Client {
             .map_err(|e| ClientError::Parse(e.to_string()))
     }
 
-    async fn submit_package(&self, txs: &[Transaction]) -> ClientResult<model::SubmitPackage> {
+    async fn submit_package(
+        &self,
+        txs: &[Transaction],
+        options: Option<BroadcastOptions>,
+    ) -> ClientResult<model::SubmitPackage> {
         let txstrs: Vec<String> = txs.iter().map(serialize_hex).collect();
-        let resp = self
-            .call::<SubmitPackage>("submitpackage", &[to_value(txstrs)?])
-            .await?;
+        let mut params = vec![to_value(txstrs)?];
+        if let Some(options) = options {
+            params.extend(options.to_params());
+        }
+
+        let resp = self.call::<SubmitPackage>("submitpackage", &params).await?;
         trace!(?resp, "Got submit package response");
 
         resp.into_model()
@@ -469,7 +483,10 @@ mod test {
 
     use std::{env, sync::Once, time::Duration};
 
-    use bitcoin::{hashes::Hash, transaction, Amount, FeeRate, NetworkKind};
+    use bitcoin::{
+        hashes::Hash, opcodes::all::OP_RETURN, script::Builder, transaction, Amount, FeeRate,
+        NetworkKind,
+    };
     use corepc_node::{Conf, Node, P2P};
     use corepc_types::v29::ImportDescriptorsResult;
     use serde_json::Value;
@@ -478,8 +495,13 @@ mod test {
 
     use super::*;
     use crate::{
-        test_utils::corepc_node_helpers::{get_bitcoind_and_client, mine_blocks},
-        types::{CreateRawTransactionInput, CreateRawTransactionOutput},
+        test_utils::corepc_node_helpers::{
+            assert_max_burn_amount_rejected, get_bitcoind_and_client, mine_blocks,
+        },
+        types::{
+            BroadcastOptions, CreateRawTransactionInput, CreateRawTransactionOutput,
+            SendRawTransactionOptions,
+        },
         Auth,
     };
 
@@ -673,7 +695,7 @@ mod test {
 
         // get_transaction
         let tx = client.get_transaction(&txid).await.unwrap().tx;
-        let got = client.send_raw_transaction(&tx).await.unwrap();
+        let got = client.send_raw_transaction(&tx, None).await.unwrap();
         let expected = txid; // Don't touch this!
         assert_eq!(expected, got);
 
@@ -735,7 +757,7 @@ mod test {
         );
 
         // send_raw_transaction
-        let got = client.send_raw_transaction(&tx).await.unwrap();
+        let got = client.send_raw_transaction(&tx, None).await.unwrap();
         assert!(got.as_byte_array().len() == 32);
 
         // list_transactions
@@ -898,6 +920,99 @@ mod test {
         assert_eq!(got.blocks, 2);
     }
 
+    async fn signed_op_return_burn_transaction(
+        bitcoind: &Node,
+        client: &Client,
+    ) -> (Transaction, Amount) {
+        let blocks = mine_blocks(bitcoind, 101, None).unwrap();
+        let spendable_block = client.get_block(blocks.first().unwrap()).await.unwrap();
+        let coinbase_tx = spendable_block.coinbase().unwrap();
+
+        let burn_amount = Amount::from_sat(1_000);
+        let fee = Amount::from_sat(10_000);
+        let change_amount = COINBASE_AMOUNT - burn_amount - fee;
+        let burn_address = client.get_new_address().await.unwrap();
+        let change_address = client.get_new_address().await.unwrap();
+        let raw_tx = CreateRawTransactionArguments {
+            inputs: vec![CreateRawTransactionInput {
+                txid: coinbase_tx.compute_txid().to_string(),
+                vout: 0,
+            }],
+            outputs: vec![
+                CreateRawTransactionOutput::AddressAmount {
+                    address: burn_address.to_string(),
+                    amount: burn_amount.to_btc(),
+                },
+                CreateRawTransactionOutput::AddressAmount {
+                    address: change_address.to_string(),
+                    amount: change_amount.to_btc(),
+                },
+            ],
+        };
+        let mut tx = client.create_raw_transaction(raw_tx).await.unwrap();
+        tx.output[0].script_pubkey = Builder::new()
+            .push_opcode(OP_RETURN)
+            .push_slice([1u8; 32])
+            .into_script();
+
+        let signed_tx = client
+            .sign_raw_transaction_with_wallet(&tx, None)
+            .await
+            .unwrap()
+            .tx;
+
+        (signed_tx, burn_amount)
+    }
+
+    #[tokio::test()]
+    async fn send_raw_transaction_accepts_explicit_max_burn_amount() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+        let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
+
+        let rejected = client.send_raw_transaction(&signed_tx, None).await;
+        assert_max_burn_amount_rejected(rejected, "sendrawtransaction");
+
+        let txid = client
+            .send_raw_transaction(
+                &signed_tx,
+                Some(SendRawTransactionOptions {
+                    max_burn_amount: Some(burn_amount),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(txid, signed_tx.compute_txid());
+    }
+
+    #[tokio::test()]
+    async fn submit_package_accepts_explicit_max_burn_amount() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+        let (signed_tx, burn_amount) = signed_op_return_burn_transaction(&bitcoind, &client).await;
+
+        let rejected = client.submit_package(&[signed_tx.clone()], None).await;
+        assert_max_burn_amount_rejected(rejected, "submitpackage");
+
+        let result = client
+            .submit_package(
+                &[signed_tx],
+                Some(BroadcastOptions {
+                    max_burn_amount: Some(burn_amount),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.package_msg, "success");
+        assert_eq!(result.tx_results.len(), 1);
+    }
+
     #[tokio::test()]
     async fn get_tx_out() {
         init_tracing();
@@ -992,7 +1107,10 @@ mod test {
             .tx;
 
         // sanity check
-        let parent_submitted = client.send_raw_transaction(&signed_parent).await.unwrap();
+        let parent_submitted = client
+            .send_raw_transaction(&signed_parent, None)
+            .await
+            .unwrap();
 
         let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
@@ -1016,7 +1134,7 @@ mod test {
 
         // Ok now we have a parent and a child transaction.
         let result = client
-            .submit_package(&[signed_parent, signed_child])
+            .submit_package(&[signed_parent, signed_child], None)
             .await
             .unwrap();
         assert_eq!(result.tx_results.len(), 2);
@@ -1067,7 +1185,7 @@ mod test {
         assert_eq!(signed_parent.version, transaction::Version(3));
 
         // Assert that the parent tx cannot be broadcasted.
-        let parent_broadcasted = client.send_raw_transaction(&signed_parent).await;
+        let parent_broadcasted = client.send_raw_transaction(&signed_parent, None).await;
         assert!(parent_broadcasted.is_err());
 
         // 5k sats as fees.
@@ -1102,12 +1220,12 @@ mod test {
         assert_eq!(signed_child.version, transaction::Version(3));
 
         // Assert that the child tx cannot be broadcasted.
-        let child_broadcasted = client.send_raw_transaction(&signed_child).await;
+        let child_broadcasted = client.send_raw_transaction(&signed_child, None).await;
         assert!(child_broadcasted.is_err());
 
         // Let's send as a package 1C1P.
         let result = client
-            .submit_package(&[signed_parent, signed_child])
+            .submit_package(&[signed_parent, signed_child], None)
             .await
             .unwrap();
         assert_eq!(result.tx_results.len(), 2);

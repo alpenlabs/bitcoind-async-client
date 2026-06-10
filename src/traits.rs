@@ -11,9 +11,9 @@ use std::future::Future;
 use crate::types::{ImportDescriptorInput, SighashType};
 use crate::{
     types::{
-        CreateRawTransactionArguments, CreateRawTransactionInput, CreateRawTransactionOutput,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
-        WalletCreateFundedPsbtOptions,
+        BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
+        CreateRawTransactionOutput, ListUnspentQueryOptions, PreviousTransactionOutput,
+        PsbtBumpFeeOptions, SendRawTransactionOptions, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -147,9 +147,11 @@ pub trait Broadcaster {
     ///
     /// - `tx`: The raw transaction to send. This should be a byte array containing the serialized
     ///   raw transaction data.
+    /// - `options`: Optional broadcast policy controls for maximum fee rate and burn amount.
     fn send_raw_transaction(
         &self,
         tx: &Transaction,
+        options: Option<SendRawTransactionOptions>,
     ) -> impl Future<Output = ClientResult<Txid>> + Send;
 
     /// Tests if a raw transaction is valid.
@@ -165,12 +167,18 @@ pub trait Broadcaster {
     /// interface may be unstable. Refer to doc/policy/packages.md for documentation on package
     /// policies.
     ///
+    /// # Parameters
+    ///
+    /// - `txs`: The transactions to submit as a package.
+    /// - `options`: Optional package policy controls for maximum fee rate and burn amount.
+    ///
     /// # Warning
     ///
     /// Successful submission does not mean the transactions will propagate throughout the network.
     fn submit_package(
         &self,
         txs: &[Transaction],
+        options: Option<BroadcastOptions>,
     ) -> impl Future<Output = ClientResult<SubmitPackage>> + Send;
 }
 
