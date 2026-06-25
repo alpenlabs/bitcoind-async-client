@@ -350,6 +350,43 @@ pub struct WalletCreateFundedPsbtOptions {
     pub replaceable: Option<bool>,
 }
 
+/// Options for sending transactions with the wallet.
+///
+/// Used with [`Wallet::send`](crate::traits::Wallet::send) to fund, sign, and optionally
+/// broadcast a transaction via Bitcoin Core's `send` RPC.
+///
+/// # Note
+///
+/// All fields are optional and will use Bitcoin Core defaults if not specified.
+#[derive(Clone, Debug, PartialEq, Serialize, Default)]
+pub struct SendOptions {
+    /// Add the transaction to the wallet and broadcast it. When `false`, `send` returns
+    /// the signed PSBT without broadcasting. Default is `true`.
+    #[serde(
+        default,
+        rename = "add_to_wallet",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub add_to_wallet: Option<bool>,
+
+    /// Fee rate in sat/vB.
+    #[serde(
+        default,
+        rename = "fee_rate",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_fee_rate"
+    )]
+    pub fee_rate: Option<FeeRate>,
+
+    /// Lock the selected UTXOs. Note: `send` expects `lock_unspents`, not `lockUnspents`.
+    #[serde(
+        default,
+        rename = "lock_unspents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lock_unspents: Option<bool>,
+}
+
 /// Query options for filtering unspent transaction outputs.
 ///
 /// Used with `list_unspent` to apply additional filtering criteria
@@ -472,6 +509,19 @@ mod tests {
 
             prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
         }
+
+        #[test]
+        fn send_options_roundtrips_fee_rate(
+            sat_per_kwu in 0u64..=MAX_REASONABLE_FEE_RATE_SAT_PER_KWU,
+        ) {
+            let value = serde_json::to_value(SendOptions {
+                fee_rate: Some(FeeRate::from_sat_per_kwu(sat_per_kwu)),
+                ..Default::default()
+            })
+            .unwrap();
+
+            prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
+        }
     }
 
     #[test]
@@ -564,6 +614,32 @@ mod tests {
         .unwrap();
 
         assert_eq!(value, json!({ "fee_rate": 20.0 }));
+    }
+
+    #[test]
+    fn send_options_serializes_fields_example() {
+        let value = serde_json::to_value(SendOptions {
+            add_to_wallet: Some(false),
+            fee_rate: Some(FeeRate::from_sat_per_vb(2).unwrap()),
+            lock_unspents: Some(true),
+        })
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({ "add_to_wallet": false, "fee_rate": 2.0, "lock_unspents": true })
+        );
+    }
+
+    #[test]
+    fn send_options_skips_missing_fields() {
+        let value = serde_json::to_value(SendOptions {
+            add_to_wallet: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(value, json!({ "add_to_wallet": false }));
     }
 
     #[test]

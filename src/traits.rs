@@ -13,7 +13,7 @@ use crate::{
     types::{
         BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
         CreateRawTransactionOutput, ListUnspentQueryOptions, PreviousTransactionOutput,
-        PsbtBumpFeeOptions, SendRawTransactionOptions, WalletCreateFundedPsbtOptions,
+        PsbtBumpFeeOptions, SendOptions, SendRawTransactionOptions, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
 };
@@ -260,6 +260,19 @@ pub trait Wallet {
         options: Option<WalletCreateFundedPsbtOptions>,
         bip32_derivs: Option<bool>,
     ) -> impl Future<Output = ClientResult<WalletCreateFundedPsbt>> + Send;
+
+    /// Funds, signs, and optionally broadcasts a transaction via Bitcoin Core's `send` RPC.
+    ///
+    /// Unlike [`wallet_create_funded_psbt`](Self::wallet_create_funded_psbt), `send` lets Core
+    /// set the `nLockTime`. Core v30 and newer default to an anti-fee-sniping `nLockTime` near the
+    /// current block height, whereas v29 defaults to `0`.
+    ///
+    /// With `add_to_wallet = false` it returns the signed PSBT without broadcasting.
+    fn send(
+        &self,
+        outputs: &[CreateRawTransactionOutput],
+        options: Option<SendOptions>,
+    ) -> impl Future<Output = ClientResult<corepc_types::model::Send>> + Send;
 
     /// Returns detailed information about the given address.
     ///

@@ -17,6 +17,7 @@ use corepc_types::v29::{
     SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
     WalletProcessPsbt,
 };
+use serde_json::Value;
 use tracing::*;
 
 use crate::{
@@ -27,7 +28,7 @@ use crate::{
     types::{
         BroadcastOptions, CreateRawTransactionArguments, CreateRawTransactionInput,
         CreateRawTransactionOutput, CreateWalletArguments, ImportDescriptorInput,
-        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions,
+        ListUnspentQueryOptions, PreviousTransactionOutput, PsbtBumpFeeOptions, SendOptions,
         SendRawTransactionOptions, SighashType, WalletCreateFundedPsbtOptions,
     },
     ClientResult,
@@ -311,6 +312,27 @@ impl Wallet for Client {
                     to_value(locktime.unwrap_or(0))?,
                     to_value(options.unwrap_or_default())?,
                     to_value(bip32_derivs)?,
+                ],
+            )
+            .await?;
+        resp.into_model()
+            .map_err(|e| ClientError::Parse(e.to_string()))
+    }
+
+    async fn send(
+        &self,
+        outputs: &[CreateRawTransactionOutput],
+        options: Option<SendOptions>,
+    ) -> ClientResult<model::Send> {
+        let resp = self
+            .call::<corepc_types::v29::Send>(
+                "send",
+                &[
+                    to_value(outputs)?,
+                    Value::Null,
+                    Value::Null,
+                    Value::Null,
+                    to_value(options.unwrap_or_default())?,
                 ],
             )
             .await?;
@@ -1378,6 +1400,46 @@ mod test {
             got, signed_txid,
             "Bumped transaction should be accepted in mempool"
         );
+    }
+
+    #[tokio::test]
+    async fn send_returns_signed_psbt_with_zero_locktime() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+
+        mine_blocks(&bitcoind, 101, None).unwrap();
+
+        let destination = client.get_new_address().await.unwrap();
+        let outputs = vec![CreateRawTransactionOutput::AddressAmount {
+            address: destination.to_string(),
+            amount: 1.0,
+        }];
+
+        let options = SendOptions {
+            add_to_wallet: Some(false),
+            fee_rate: Some(FeeRate::from_sat_per_vb(2).unwrap()),
+            lock_unspents: Some(true),
+        };
+        let result = client.send(&outputs, Some(options)).await.unwrap();
+
+        assert!(result.complete, "single-sig wallet should fully sign");
+        let psbt = result.psbt.expect("add_to_wallet=false returns a PSBT");
+
+        // v29's `send` does not apply anti-fee-sniping; the nLockTime defaults to 0.
+        let locktime = psbt.unsigned_tx.lock_time.to_consensus_u32();
+        assert_eq!(locktime, 0, "v29 send should default nLockTime to 0");
+
+        let signed_tx = psbt.extract_tx().unwrap();
+        let signed_txid = signed_tx.compute_txid();
+        let acceptance = client.test_mempool_accept(&signed_tx).await.unwrap();
+        let result = acceptance.results.first().unwrap();
+        assert!(
+            result.allowed,
+            "signed tx from send's PSBT should be accepted: {:?}",
+            result.reject_reason
+        );
+        assert_eq!(result.txid, signed_txid);
     }
 
     #[cfg(feature = "raw_rpc")]
