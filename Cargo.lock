@@ -125,7 +125,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bitcoin",
- "bitreq 0.3.5",
+ "bitreq 0.3.7",
  "corepc-node",
  "corepc-types 0.14.0",
  "hex-conservative",
@@ -157,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "bitreq"
-version = "0.3.5"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6df90cd78f0510165fd370574676aeb57dbec0ee3bfff68645bb7b0e9a65dbd5"
+checksum = "b65c2e1ab98050c93cc9ada070d5070e014329c65196d03f6f8f1f75c2666f37"
 dependencies = [
  "rustls",
  "rustls-webpki",
@@ -238,7 +238,7 @@ checksum = "2f8749105873c391b77fc943b7fdf8c05b6c1d06f6e71c6d2746ee7f8bda0072"
 dependencies = [
  "anyhow",
  "bitcoin_hashes",
- "bitreq 0.3.5",
+ "bitreq 0.3.7",
  "corepc-client",
  "flate2",
  "log",
