@@ -30,7 +30,7 @@ bitcoin = { version = "0.32.9", features = ["serde", "base64"] }
 bitreq = { version = "0.3.4", default-features = false, features = [
   "async-https",
 ] }
-corepc-types = "0.13.0" # try to keep in sync with corepc-node
+corepc-types = "0.14.0" # try to keep in sync with corepc-node
 hex = { package = "hex-conservative", version = "0.2.1" } # for optimization keep in sync with bitcoin
 secp256k1 = { version = "0.29.1", features = [ # for optimization keep in sync with bitcoin
   "global-context",
