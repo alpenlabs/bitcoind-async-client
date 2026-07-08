@@ -55,10 +55,9 @@ impl Serialize for CreateRawTransactionOutput {
         match self {
             CreateRawTransactionOutput::AddressAmount { address, amount } => {
                 let mut map = serde_json::Map::new();
-                map.insert(
-                    address.clone(),
-                    serde_json::Value::Number(serde_json::Number::from_f64(*amount).unwrap()),
-                );
+                let amount = serde_json::Number::from_f64(*amount)
+                    .ok_or_else(|| serde::ser::Error::custom("amount must fit in a f64"))?;
+                map.insert(address.clone(), serde_json::Value::Number(amount));
                 map.serialize(serializer)
             }
             CreateRawTransactionOutput::Data { data } => {
@@ -522,6 +521,17 @@ mod tests {
 
             prop_assert_eq!(serialized_fee_rate_sat_per_kwu(&value), sat_per_kwu);
         }
+    }
+
+    #[test]
+    fn create_raw_transaction_output_rejects_nonfinite_amounts() {
+        let output = CreateRawTransactionOutput::AddressAmount {
+            address: "bcrt1qtest".to_string(),
+            amount: f64::NAN,
+        };
+
+        let err = serde_json::to_value(output).unwrap_err();
+        assert!(err.to_string().contains("amount must fit in a f64"));
     }
 
     #[test]
