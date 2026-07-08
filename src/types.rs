@@ -56,7 +56,7 @@ impl Serialize for CreateRawTransactionOutput {
             CreateRawTransactionOutput::AddressAmount { address, amount } => {
                 let mut map = serde_json::Map::new();
                 let amount = serde_json::Number::from_f64(*amount)
-                    .ok_or_else(|| serde::ser::Error::custom("amount must be finite"))?;
+                    .ok_or_else(|| serde::ser::Error::custom("amount must fit in a f64"))?;
                 map.insert(address.clone(), serde_json::Value::Number(amount));
                 map.serialize(serializer)
             }
