@@ -531,7 +531,7 @@ mod tests {
         };
 
         let err = serde_json::to_value(output).unwrap_err();
-        assert!(err.to_string().contains("amount must be finite"));
+        assert!(err.to_string().contains("amount must fit in a f64"));
     }
 
     #[test]
