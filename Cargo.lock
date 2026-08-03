@@ -137,7 +137,7 @@ dependencies = [
  "bitcoin",
  "bitreq 0.3.7",
  "corepc-node",
- "corepc-types 0.14.0",
+ "corepc-types 0.15.0",
  "hex-conservative 0.2.2",
  "proptest",
  "secp256k1",
@@ -272,9 +272,9 @@ dependencies = [
 
 [[package]]
 name = "corepc-types"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f095534efdb8f2f43d48b9c3e9f35aefdf29ec6a5f1895064f575a67bc2a8dfe"
+checksum = "86c274042a89391a324ab313b5210680969d02a9fa977733c3354aea4d7a4883"
 dependencies = [
  "bitcoin",
  "serde",
