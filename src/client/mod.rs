@@ -115,7 +115,6 @@ pub struct Client {
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
-            .field("url", &self.url)
             .field("timeout", &self.timeout)
             .field("id", &self.id)
             .field("max_retries", &self.max_retries)
@@ -160,7 +159,7 @@ impl Client {
 
         let http_client = BitreqClient::new(DEFAULT_HTTP_CLIENT_CAPACITY);
 
-        trace!(url = %url, "Created bitcoin client");
+        trace!("Created bitcoin client");
 
         Ok(Self {
             url,
@@ -184,7 +183,8 @@ impl Client {
     ) -> ClientResult<T> {
         let mut retries = 0;
         loop {
-            debug!(%method, ?params, %retries, "Calling bitcoin client");
+            // RPC parameters and responses can contain private descriptors and keys.
+            debug!(%method, %retries, "Calling bitcoin client");
 
             let id = self.next_id();
 
@@ -224,7 +224,7 @@ impl Client {
                         ));
                     }
 
-                    trace!(%raw_response, "Raw response received");
+                    trace!(%method, %status_code, "Bitcoin RPC response received");
                     let data: Response<T> = serde_json::from_str(raw_response)
                         .map_err(|e| ClientError::Parse(e.to_string()))?;
                     if let Some(err) = data.error {
@@ -309,7 +309,11 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        io::{self, Write},
+        sync::Mutex,
+        time::Duration,
+    };
 
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -317,8 +321,111 @@ mod tests {
         sync::oneshot,
         time::{sleep, timeout},
     };
+    use tracing::subscriber::NoSubscriber;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Exercise the shared transport with private descriptor request/response data.
+    /// A current-thread runtime keeps the scoped tracing subscriber on every poll.
+    #[tokio::test(flavor = "current_thread")]
+    async fn rpc_logs_omit_credentials_and_payloads() {
+        // Avoid tracing's single-dispatcher optimization caching another test
+        // thread's empty subscriber when it first uses a shared RPC callsite.
+        let _other_dispatch = Dispatch::new(NoSubscriber::default());
+        let logs = LogBuffer::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = subscriber.set_default();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            for body in [
+                r#"{"result":[{"success":true}],"error":null,"id":0}"#,
+                r#"{"result":{"descriptors":[{"desc":"tr(response-private-key)"}]},"error":null,"id":1}"#,
+                r#"{"result":null,"error":{"code":-5,"message":"error-private-key"},"id":2}"#,
+            ] {
+                read_http_request(&mut stream).await;
+                write_json_response(&mut stream, body).await;
+            }
+        });
+
+        let client = Client::new(
+            format!("http://{address}/wallet/private-wallet?token=url-secret"),
+            Auth::UserPass("rpc-user-secret".into(), "rpc-password-secret".into()),
+            Some(1),
+            None,
+            Some(5),
+        )
+        .unwrap();
+        debug!(?client, "Client configuration");
+
+        let imported: Value = client
+            .call(
+                "importdescriptors",
+                &[json!([{"desc": "tr(request-private-key)", "timestamp": "now"}])],
+            )
+            .await
+            .unwrap();
+        assert_eq!(imported, json!([{"success": true}]));
+        let descriptors: Value = client
+            .call("listdescriptors", &[json!(true)])
+            .await
+            .unwrap();
+        assert_eq!(
+            descriptors["descriptors"][0]["desc"],
+            "tr(response-private-key)"
+        );
+        let error = client
+            .call::<Value>("importdescriptors", &[json!("invalid-private-key")])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ClientError::Server(-5, message) if message == "error-private-key")
+        );
+        server.await.unwrap();
+
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        // Ensure capture is active and useful metadata remains available.
+        assert!(output.contains("Calling bitcoin client"));
+        assert!(output.contains("importdescriptors"));
+        assert!(output.contains("listdescriptors"));
+        assert!(output.contains("status_code=200"));
+        for secret in [
+            "request-private-key",
+            "response-private-key",
+            "invalid-private-key",
+            "error-private-key",
+            "rpc-user-secret",
+            "rpc-password-secret",
+            "private-wallet",
+            "url-secret",
+            client.authorization.as_str(),
+        ] {
+            assert!(!output.contains(secret), "sensitive value appeared in logs");
+        }
+    }
 
     async fn read_http_request(stream: &mut TcpStream) {
         let mut buf = vec![0u8; 4096];
