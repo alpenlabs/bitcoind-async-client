@@ -194,7 +194,6 @@ impl Broadcaster for Client {
         options: Option<SendRawTransactionOptions>,
     ) -> ClientResult<Txid> {
         let txstr = serialize_hex(tx);
-        trace!(txstr = %txstr, "Sending raw transaction");
         let mut params = vec![to_value(txstr)?];
         if let Some(options) = options {
             params.extend(options.to_params());
@@ -218,7 +217,6 @@ impl Broadcaster for Client {
         tx: &Transaction,
     ) -> ClientResult<model::TestMempoolAccept> {
         let txstr = serialize_hex(tx);
-        trace!(%txstr, "Testing mempool accept");
         let resp = self
             .call::<TestMempoolAccept>("testmempoolaccept", &[to_value([txstr])?])
             .await?;
@@ -238,7 +236,6 @@ impl Broadcaster for Client {
         }
 
         let resp = self.call::<SubmitPackage>("submitpackage", &params).await?;
-        trace!(?resp, "Got submit package response");
 
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
@@ -289,7 +286,6 @@ impl Wallet for Client {
                 &[to_value(raw_tx.inputs)?, to_value(raw_tx.outputs)?],
             )
             .await?;
-        trace!(%raw_tx, "Created raw transaction");
         consensus::encode::deserialize_hex(&raw_tx)
             .map_err(|e| ClientError::Other(format!("Failed to deserialize raw transaction: {e}")))
     }
@@ -319,7 +315,6 @@ impl Wallet for Client {
     }
 
     async fn get_address_info(&self, address: &Address) -> ClientResult<model::GetAddressInfo> {
-        trace!(address = %address, "Getting address info");
         let resp = self
             .call::<GetAddressInfo>("getaddressinfo", &[to_value(address.to_string())?])
             .await?;
@@ -351,7 +346,6 @@ impl Wallet for Client {
         }
 
         let resp = self.call::<ListUnspent>("listunspent", &params).await?;
-        trace!(?resp, "Got UTXOs");
 
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
@@ -365,8 +359,6 @@ impl Signer for Client {
         prev_outputs: Option<Vec<PreviousTransactionOutput>>,
     ) -> ClientResult<model::SignRawTransactionWithWallet> {
         let tx_hex = serialize_hex(tx);
-        trace!(tx_hex = %tx_hex, "Signing transaction");
-        trace!(?prev_outputs, "Signing transaction with previous outputs");
         let resp = self
             .call::<SignRawTransactionWithWallet>(
                 "signrawtransactionwithwallet",
