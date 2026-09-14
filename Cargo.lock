@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "bitcoind-async-client"
-version = "0.10.10"
+version = "0.10.11"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
