@@ -266,8 +266,9 @@ impl Wallet for Client {
         &self,
         count: Option<usize>,
     ) -> ClientResult<model::ListTransactions> {
+        // `count` is the second positional argument; `"*"` matches all labels.
         let resp = self
-            .call::<ListTransactions>("listtransactions", &[to_value(count)?])
+            .call::<ListTransactions>("listtransactions", &[to_value("*")?, to_value(count)?])
             .await?;
         resp.into_model()
             .map_err(|e| ClientError::Parse(e.to_string()))
@@ -1064,6 +1065,21 @@ mod test {
             .await;
         trace!(?result, "gettxout result");
         assert!(result.is_err());
+    }
+
+    #[tokio::test()]
+    async fn list_transactions_honors_count() {
+        init_tracing();
+
+        let (bitcoind, client) = get_bitcoind_and_client();
+        // Give the wallet more entries than bitcoind's default count of 10.
+        mine_blocks(&bitcoind, 20, None).unwrap();
+
+        let got = client.list_transactions(Some(15)).await.unwrap();
+        assert_eq!(got.0.len(), 15);
+
+        let got = client.list_transactions(None).await.unwrap();
+        assert_eq!(got.0.len(), 10);
     }
 
     /// Create two transactions.
