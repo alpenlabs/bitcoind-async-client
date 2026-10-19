@@ -1092,7 +1092,7 @@ mod test {
 
     /// Create two transactions.
     /// 1. Normal one: sends 1 BTC to an address that we control.
-    /// 2. CFFP: replaces the first transaction with a different one that we also control.
+    /// 2. CPFP-style child: spends the parent's first output back to an address we control.
     ///
     /// This is needed because we must SIGN all these transactions, and we can't sign a transaction
     /// that we don't control.
@@ -1226,7 +1226,7 @@ mod test {
         let parent_broadcasted = client.send_raw_transaction(&signed_parent, None).await;
         assert!(parent_broadcasted.is_err());
 
-        // 5k sats as fees.
+        // 43k sats as fees.
         let amount_minus_fees = Amount::from_sat(COINBASE_AMOUNT.to_sat() - 43_000);
         let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
