@@ -52,21 +52,6 @@ bitcoind-async-client = { version = "0.16", default-features = false, features =
 A version feature does not support other Core majors. Newer daemons may add fields
 that older features ignore, while older daemons lack fields that newer features require.
 
-## Migrating to 0.16
-
-- The default feature is now `31_1`. Against a v29 or v30 daemon with default
-  features, `get_mempool_info`, `get_raw_mempool_verbose` (with a non-empty mempool)
-  and `get_block_height` fail to deserialize. Select the matching version feature
-  with `default-features = false`.
-- `features = ["30_2"]` without `default-features = false` now enables two version
-  features and fails to compile.
-- `corepc-types` is now 0.16. Model types in the trait signatures come from 0.16,
-  so depend on `corepc-types = "0.16"` or use the re-export
-  `bitcoind_async_client::corepc_types`. Version 0.16 removes `model::GetBlockCount`,
-  `model::GetDifficulty` and `model::RescanBlockchain`, and changes
-  `RescanBlockchain` heights from `i64` to `u32`.
-- For contributors: the test harness moved from `corepc-node` to the `bitcoind` crate.
-
 ## Contributing
 
 Contributions are generally welcome.

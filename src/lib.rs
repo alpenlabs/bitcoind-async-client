@@ -8,8 +8,7 @@
 //!
 //! The typed RPC traits require exactly one version feature. Clients using only
 //! `call_raw` (the `raw_rpc` feature) can disable all version features. See
-//! [Bitcoin Core versions](https://github.com/alpenlabs/bitcoind-async-client#bitcoin-core-versions)
-//! and [Migrating to 0.16](https://github.com/alpenlabs/bitcoind-async-client#migrating-to-016).
+//! [Bitcoin Core versions](https://github.com/alpenlabs/bitcoind-async-client#bitcoin-core-versions).
 //!
 //! # Usage
 //!
