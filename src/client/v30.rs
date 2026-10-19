@@ -502,7 +502,7 @@ mod test {
         hashes::Hash, opcodes::all::OP_RETURN, script::Builder, transaction, Amount, FeeRate,
         NetworkKind,
     };
-    use corepc_node::{Conf, Node, P2P};
+    use bitcoind::{BitcoinD, Conf, P2P};
     use corepc_types::v30::ImportDescriptorsResult;
     use serde_json::Value;
     use tokio::time::sleep;
@@ -510,7 +510,7 @@ mod test {
 
     use super::*;
     use crate::{
-        test_utils::corepc_node_helpers::{
+        test_utils::bitcoind_helpers::{
             assert_max_burn_amount_rejected, get_bitcoind_and_client, mine_blocks,
         },
         types::{
@@ -552,7 +552,7 @@ mod test {
     }
 
     /// Starts two P2P-connected regtest nodes and returns a client for the node under test.
-    fn get_p2p_bitcoind_and_client() -> (Node, Node, Client) {
+    fn get_p2p_bitcoind_and_client() -> (BitcoinD, BitcoinD, Client) {
         unsafe {
             env::set_var("BITCOIN_XPRIV_RETRIEVABLE", "true");
         }
@@ -560,12 +560,12 @@ mod test {
         let mut estimator_conf = Conf::default();
         estimator_conf.args.push("-txindex=1");
         estimator_conf.p2p = P2P::Yes;
-        let estimator = Node::from_downloaded_with_conf(&estimator_conf).unwrap();
+        let estimator = BitcoinD::from_downloaded_with_conf(&estimator_conf).unwrap();
 
         let mut broadcaster_conf = Conf::default();
         broadcaster_conf.args.push("-txindex=1");
         broadcaster_conf.p2p = estimator.p2p_connect(false).unwrap();
-        let broadcaster = Node::from_downloaded_with_conf(&broadcaster_conf).unwrap();
+        let broadcaster = BitcoinD::from_downloaded_with_conf(&broadcaster_conf).unwrap();
 
         let client = Client::new(
             estimator.rpc_url(),
@@ -603,8 +603,8 @@ mod test {
 
     /// Builds enough observed relay-and-confirmation history for `estimatesmartfee` to return a fee rate.
     async fn populate_fee_estimation_history(
-        estimator: &Node,
-        broadcaster: &Node,
+        estimator: &BitcoinD,
+        broadcaster: &BitcoinD,
         estimator_client: &Client,
     ) {
         let funding_address = broadcaster.client.new_address().unwrap();
@@ -936,7 +936,7 @@ mod test {
     }
 
     async fn signed_op_return_burn_transaction(
-        bitcoind: &Node,
+        bitcoind: &BitcoinD,
         client: &Client,
     ) -> (Transaction, Amount) {
         let blocks = mine_blocks(bitcoind, 101, None).unwrap();

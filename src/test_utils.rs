@@ -1,21 +1,21 @@
 #[cfg(test)]
-pub mod corepc_node_helpers {
+pub mod bitcoind_helpers {
     use std::env;
 
     use bitcoin::{Address, BlockHash};
-    use corepc_node::{Conf, Node};
+    use bitcoind::{BitcoinD, Conf};
 
     use crate::{error::ClientError, Auth, Client, ClientResult};
 
     /// Get the authentication credentials for a given `bitcoind` instance.
-    fn get_auth(bitcoind: &Node) -> Auth {
+    fn get_auth(bitcoind: &BitcoinD) -> Auth {
         Auth::CookieFile(bitcoind.params.cookie_file.clone())
     }
 
     /// Mine a number of blocks of a given size `count`, which may be specified to a given coinbase
     /// `address`.
     pub fn mine_blocks(
-        bitcoind: &Node,
+        bitcoind: &BitcoinD,
         count: usize,
         address: Option<Address>,
     ) -> anyhow::Result<Vec<BlockHash>> {
@@ -33,14 +33,14 @@ pub mod corepc_node_helpers {
         Ok(block_hashes)
     }
 
-    pub fn get_bitcoind_and_client() -> (Node, Client) {
+    pub fn get_bitcoind_and_client() -> (BitcoinD, Client) {
         // setting the ENV variable `BITCOIN_XPRIV_RETRIEVABLE` to retrieve the xpriv
         unsafe {
             env::set_var("BITCOIN_XPRIV_RETRIEVABLE", "true");
         }
         let mut conf = Conf::default();
         conf.args.push("-txindex=1");
-        let bitcoind = Node::from_downloaded_with_conf(&conf).unwrap();
+        let bitcoind = BitcoinD::from_downloaded_with_conf(&conf).unwrap();
 
         let url = bitcoind.rpc_url();
         let client = Client::new(url, get_auth(&bitcoind), None, None, None).unwrap();

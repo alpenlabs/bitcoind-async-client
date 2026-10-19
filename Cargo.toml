@@ -20,8 +20,8 @@ keywords = ["crypto", "bitcoin"]
 
 [features]
 default = ["30_2"]
-29_0 = ["corepc-node/29_0"]
-30_2 = ["corepc-node/30_2"]
+29_0 = ["bitcoind/29_0"]
+30_2 = ["bitcoind/30_2"]
 raw_rpc = []
 
 [dependencies]
@@ -30,7 +30,7 @@ bitcoin = { version = "0.32.9", features = ["serde", "base64"] }
 bitreq = { version = "0.3.5", default-features = false, features = [
   "async-https",
 ] }
-corepc-types = "0.15.0" # try to keep in sync with corepc-node
+corepc-types = "0.16.0" # try to keep in sync with bitcoind
 hex = { package = "hex-conservative", version = "0.2.1" } # for optimization keep in sync with bitcoin
 secp256k1 = { version = "0.29.1", features = [ # for optimization keep in sync with bitcoin
   "global-context",
@@ -43,7 +43,7 @@ tracing = { version = "0.1.41", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.102"
-corepc-node = { version = "0.12.0", features = [
+bitcoind = { version = "0.42.0", features = [
   "download",
 ] } # try keep in sync with corepc-types
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
