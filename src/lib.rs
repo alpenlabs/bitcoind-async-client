@@ -3,7 +3,8 @@
 //! # Features
 //!
 //! - `29_0`: Enable support for Bitcoin Core v29.
-//! - `30_2`: Enable support for Bitcoin Core v30.2. This is enabled by default.
+//! - `30_2`: Enable support for Bitcoin Core v30.2.
+//! - `31_1`: Enable support for Bitcoin Core v31.1. This is enabled by default.
 //!
 //! # Usage
 //!

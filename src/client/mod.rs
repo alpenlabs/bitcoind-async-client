@@ -18,16 +18,23 @@ use serde_json::{json, value::Value};
 use tokio::time::sleep;
 use tracing::*;
 
-#[cfg(all(feature = "29_0", feature = "30_2"))]
+#[cfg(any(
+    all(feature = "29_0", feature = "30_2"),
+    all(feature = "29_0", feature = "31_1"),
+    all(feature = "30_2", feature = "31_1")
+))]
 compile_error!(
-    "Bitcoin Core version features are mutually exclusive; select only one of `29_0` or `30_2`."
+    "Bitcoin Core version features are mutually exclusive; select only one of `29_0`, `30_2`, or `31_1`."
 );
 
-#[cfg(all(feature = "29_0", not(feature = "30_2")))]
+#[cfg(all(feature = "29_0", not(any(feature = "30_2", feature = "31_1"))))]
 pub mod v29;
 
-#[cfg(all(feature = "30_2", not(feature = "29_0")))]
+#[cfg(all(feature = "30_2", not(any(feature = "29_0", feature = "31_1"))))]
 pub mod v30;
+
+#[cfg(all(feature = "31_1", not(any(feature = "29_0", feature = "30_2"))))]
+pub mod v31;
 
 /// This is an alias for the result type returned by the [`Client`].
 pub type ClientResult<T> = Result<T, ClientError>;

@@ -19,9 +19,10 @@ categories = ["cryptography::cryptocurrencies"]
 keywords = ["crypto", "bitcoin"]
 
 [features]
-default = ["30_2"]
+default = ["31_1"]
 29_0 = ["bitcoind/29_0"]
 30_2 = ["bitcoind/30_2"]
+31_1 = ["bitcoind/31_1"]
 raw_rpc = []
 
 [dependencies]
