@@ -1400,26 +1400,21 @@ mod test {
         );
 
         // Test psbt_bump_fee with default options
-        let signed_tx = client
-            .psbt_bump_fee(&txid, None)
+        let bumped_psbt = client.psbt_bump_fee(&txid, None).await.unwrap().psbt;
+        let processed_psbt = client
+            .wallet_process_psbt(&bumped_psbt.to_string(), Some(true), None, None)
             .await
-            .unwrap()
-            .psbt
-            .extract_tx()
             .unwrap();
-        let signed_txid = signed_tx.compute_txid();
-        let got = client
-            .test_mempool_accept(&signed_tx)
-            .await
-            .unwrap()
-            .results
-            .first()
-            .unwrap()
-            .txid;
-        assert_eq!(
-            got, signed_txid,
-            "Bumped transaction should be accepted in mempool"
+        assert!(processed_psbt.complete);
+        let bumped_tx = processed_psbt.psbt.extract_tx().unwrap();
+        let acceptance = client.test_mempool_accept(&bumped_tx).await.unwrap();
+        let result = acceptance.results.first().unwrap();
+        assert!(
+            result.allowed,
+            "bumped transaction should be accepted: {:?}",
+            result.reject_reason
         );
+        assert_eq!(result.txid, bumped_tx.compute_txid());
 
         // Test psbt_bump_fee with custom fee rate
         let options = PsbtBumpFeeOptions {
@@ -1427,26 +1422,25 @@ mod test {
             ..Default::default()
         };
         trace!(?options, "Calling psbt_bump_fee");
-        let signed_tx = client
+        let bumped_psbt = client
             .psbt_bump_fee(&txid, Some(options))
             .await
             .unwrap()
-            .psbt
-            .extract_tx()
-            .unwrap();
-        let signed_txid = signed_tx.compute_txid();
-        let got = client
-            .test_mempool_accept(&signed_tx)
+            .psbt;
+        let processed_psbt = client
+            .wallet_process_psbt(&bumped_psbt.to_string(), Some(true), None, None)
             .await
-            .unwrap()
-            .results
-            .first()
-            .unwrap()
-            .txid;
-        assert_eq!(
-            got, signed_txid,
-            "Bumped transaction should be accepted in mempool"
+            .unwrap();
+        assert!(processed_psbt.complete);
+        let bumped_tx = processed_psbt.psbt.extract_tx().unwrap();
+        let acceptance = client.test_mempool_accept(&bumped_tx).await.unwrap();
+        let result = acceptance.results.first().unwrap();
+        assert!(
+            result.allowed,
+            "bumped transaction should be accepted: {:?}",
+            result.reject_reason
         );
+        assert_eq!(result.txid, bumped_tx.compute_txid());
     }
 
     #[tokio::test]
