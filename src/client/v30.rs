@@ -690,6 +690,14 @@ mod test {
         let got = client.get_block_hash(target_height).await.unwrap();
         assert_eq!(*expected, got);
 
+        // get_block_height
+        let expected = blocks.len() as u64;
+        let got = client
+            .get_block_height(blocks.last().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(expected, got);
+
         // get_block_header_at
         let target_height = blocks.len() as u64;
         let expected = blocks.last().unwrap();
@@ -1183,9 +1191,9 @@ mod test {
 
         let (bitcoind, client) = get_bitcoind_and_client();
 
-        // 1p1c sanity check
+        // The harness must run the Core major this module targets.
         let server_version = bitcoind.client.server_version().unwrap();
-        assert!(server_version > 28);
+        assert_eq!(server_version / 10_000, 30);
 
         let destination = client.get_new_address().await.unwrap();
 
