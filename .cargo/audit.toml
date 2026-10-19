@@ -1,0 +1,12 @@
+# `zip` 0.6.6 is a build dependency of the `bitcoind` test harness (a
+# dev-dependency), so it is not part of the published crate's dependency graph.
+# Its build script only uses `zip` on Windows x86_64, after checking the archive
+# against the official Bitcoin Core SHA256SUMS, and it copies `bitcoind.exe` out
+# by hand instead of calling `extract()`. None of these advisories is reachable.
+# Remove the entries once `bitcoind` depends on `zip` 9.0.0 or later.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0367", # zip: SUID/SGID bits kept during extraction
+  "RUSTSEC-2026-0368", # zip: `ZipArchive::extract` symlinks escape the target
+  "RUSTSEC-2026-0369", # zip: `extract()` applies permissions through symlinks
+]

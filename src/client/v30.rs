@@ -502,7 +502,7 @@ mod test {
         hashes::Hash, opcodes::all::OP_RETURN, script::Builder, transaction, Amount, FeeRate,
         NetworkKind,
     };
-    use corepc_node::{Conf, Node, P2P};
+    use bitcoind::{BitcoinD, Conf, P2P};
     use corepc_types::v30::ImportDescriptorsResult;
     use serde_json::Value;
     use tokio::time::sleep;
@@ -510,7 +510,7 @@ mod test {
 
     use super::*;
     use crate::{
-        test_utils::corepc_node_helpers::{
+        test_utils::bitcoind_helpers::{
             assert_max_burn_amount_rejected, get_bitcoind_and_client, mine_blocks,
         },
         types::{
@@ -552,7 +552,7 @@ mod test {
     }
 
     /// Starts two P2P-connected regtest nodes and returns a client for the node under test.
-    fn get_p2p_bitcoind_and_client() -> (Node, Node, Client) {
+    fn get_p2p_bitcoind_and_client() -> (BitcoinD, BitcoinD, Client) {
         unsafe {
             env::set_var("BITCOIN_XPRIV_RETRIEVABLE", "true");
         }
@@ -560,12 +560,12 @@ mod test {
         let mut estimator_conf = Conf::default();
         estimator_conf.args.push("-txindex=1");
         estimator_conf.p2p = P2P::Yes;
-        let estimator = Node::from_downloaded_with_conf(&estimator_conf).unwrap();
+        let estimator = BitcoinD::from_downloaded_with_conf(&estimator_conf).unwrap();
 
         let mut broadcaster_conf = Conf::default();
         broadcaster_conf.args.push("-txindex=1");
         broadcaster_conf.p2p = estimator.p2p_connect(false).unwrap();
-        let broadcaster = Node::from_downloaded_with_conf(&broadcaster_conf).unwrap();
+        let broadcaster = BitcoinD::from_downloaded_with_conf(&broadcaster_conf).unwrap();
 
         let client = Client::new(
             estimator.rpc_url(),
@@ -603,8 +603,8 @@ mod test {
 
     /// Builds enough observed relay-and-confirmation history for `estimatesmartfee` to return a fee rate.
     async fn populate_fee_estimation_history(
-        estimator: &Node,
-        broadcaster: &Node,
+        estimator: &BitcoinD,
+        broadcaster: &BitcoinD,
         estimator_client: &Client,
     ) {
         let funding_address = broadcaster.client.new_address().unwrap();
@@ -689,6 +689,14 @@ mod test {
         let expected = blocks.last().unwrap();
         let got = client.get_block_hash(target_height).await.unwrap();
         assert_eq!(*expected, got);
+
+        // get_block_height
+        let expected = blocks.len() as u64;
+        let got = client
+            .get_block_height(blocks.last().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(expected, got);
 
         // get_block_header_at
         let target_height = blocks.len() as u64;
@@ -936,7 +944,7 @@ mod test {
     }
 
     async fn signed_op_return_burn_transaction(
-        bitcoind: &Node,
+        bitcoind: &BitcoinD,
         client: &Client,
     ) -> (Transaction, Amount) {
         let blocks = mine_blocks(bitcoind, 101, None).unwrap();
@@ -1084,7 +1092,7 @@ mod test {
 
     /// Create two transactions.
     /// 1. Normal one: sends 1 BTC to an address that we control.
-    /// 2. CFFP: replaces the first transaction with a different one that we also control.
+    /// 2. CPFP-style child: spends the parent's first output back to an address we control.
     ///
     /// This is needed because we must SIGN all these transactions, and we can't sign a transaction
     /// that we don't control.
@@ -1183,9 +1191,9 @@ mod test {
 
         let (bitcoind, client) = get_bitcoind_and_client();
 
-        // 1p1c sanity check
+        // The harness must run the Core major this module targets.
         let server_version = bitcoind.client.server_version().unwrap();
-        assert!(server_version > 28);
+        assert_eq!(server_version / 10_000, 30);
 
         let destination = client.get_new_address().await.unwrap();
 
@@ -1218,7 +1226,7 @@ mod test {
         let parent_broadcasted = client.send_raw_transaction(&signed_parent, None).await;
         assert!(parent_broadcasted.is_err());
 
-        // 5k sats as fees.
+        // 43k sats as fees.
         let amount_minus_fees = Amount::from_sat(COINBASE_AMOUNT.to_sat() - 43_000);
         let child_raw_tx = CreateRawTransactionArguments {
             inputs: vec![CreateRawTransactionInput {
@@ -1361,26 +1369,21 @@ mod test {
         );
 
         // Test psbt_bump_fee with default options
-        let signed_tx = client
-            .psbt_bump_fee(&txid, None)
+        let bumped_psbt = client.psbt_bump_fee(&txid, None).await.unwrap().psbt;
+        let processed_psbt = client
+            .wallet_process_psbt(&bumped_psbt.to_string(), Some(true), None, None)
             .await
-            .unwrap()
-            .psbt
-            .extract_tx()
             .unwrap();
-        let signed_txid = signed_tx.compute_txid();
-        let got = client
-            .test_mempool_accept(&signed_tx)
-            .await
-            .unwrap()
-            .results
-            .first()
-            .unwrap()
-            .txid;
-        assert_eq!(
-            got, signed_txid,
-            "Bumped transaction should be accepted in mempool"
+        assert!(processed_psbt.complete);
+        let bumped_tx = processed_psbt.psbt.extract_tx().unwrap();
+        let acceptance = client.test_mempool_accept(&bumped_tx).await.unwrap();
+        let result = acceptance.results.first().unwrap();
+        assert!(
+            result.allowed,
+            "bumped transaction should be accepted: {:?}",
+            result.reject_reason
         );
+        assert_eq!(result.txid, bumped_tx.compute_txid());
 
         // Test psbt_bump_fee with custom fee rate
         let options = PsbtBumpFeeOptions {
@@ -1388,26 +1391,25 @@ mod test {
             ..Default::default()
         };
         trace!(?options, "Calling psbt_bump_fee");
-        let signed_tx = client
+        let bumped_psbt = client
             .psbt_bump_fee(&txid, Some(options))
             .await
             .unwrap()
-            .psbt
-            .extract_tx()
-            .unwrap();
-        let signed_txid = signed_tx.compute_txid();
-        let got = client
-            .test_mempool_accept(&signed_tx)
+            .psbt;
+        let processed_psbt = client
+            .wallet_process_psbt(&bumped_psbt.to_string(), Some(true), None, None)
             .await
-            .unwrap()
-            .results
-            .first()
-            .unwrap()
-            .txid;
-        assert_eq!(
-            got, signed_txid,
-            "Bumped transaction should be accepted in mempool"
+            .unwrap();
+        assert!(processed_psbt.complete);
+        let bumped_tx = processed_psbt.psbt.extract_tx().unwrap();
+        let acceptance = client.test_mempool_accept(&bumped_tx).await.unwrap();
+        let result = acceptance.results.first().unwrap();
+        assert!(
+            result.allowed,
+            "bumped transaction should be accepted: {:?}",
+            result.reject_reason
         );
+        assert_eq!(result.txid, bumped_tx.compute_txid());
     }
 
     #[tokio::test]

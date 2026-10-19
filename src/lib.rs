@@ -3,16 +3,31 @@
 //! # Features
 //!
 //! - `29_0`: Enable support for Bitcoin Core v29.
-//! - `30_2`: Enable support for Bitcoin Core v30.2. This is enabled by default.
+//! - `30_2`: Enable support for Bitcoin Core v30.2.
+//! - `31_1`: Enable support for Bitcoin Core v31.1. This is enabled by default.
+//!
+//! The typed RPC traits require exactly one version feature. Clients using only
+//! `call_raw` (the `raw_rpc` feature) can disable all version features. See
+//! [Bitcoin Core versions](https://github.com/alpenlabs/bitcoind-async-client#bitcoin-core-versions).
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use bitcoind_async_client::Client;
+//! ```rust,no_run
+//! use bitcoind_async_client::{traits::Reader, Auth, Client};
 //!
-//! let client = Client::new("http://localhost:8332".to_string(), "username".to_string(), "password".to_string(), None, None, None).await?;
+//! # #[cfg(any(feature = "29_0", feature = "30_2", feature = "31_1"))]
+//! # async fn example() -> Result<(), bitcoind_async_client::error::ClientError> {
+//! let client = Client::new(
+//!     "http://localhost:8332".to_string(),
+//!     Auth::UserPass("username".to_string(), "password".to_string()),
+//!     None,
+//!     None,
+//!     None,
+//! )?;
 //!
 //! let blockchain_info = client.get_blockchain_info().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # License
