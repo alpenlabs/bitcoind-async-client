@@ -6,14 +6,27 @@
 //! - `30_2`: Enable support for Bitcoin Core v30.2.
 //! - `31_1`: Enable support for Bitcoin Core v31.1. This is enabled by default.
 //!
+//! Exactly one version feature must be enabled. See
+//! [Bitcoin Core versions](https://github.com/alpenlabs/bitcoind-async-client#bitcoin-core-versions)
+//! and [Migrating to 0.16](https://github.com/alpenlabs/bitcoind-async-client#migrating-to-016).
+//!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use bitcoind_async_client::Client;
+//! ```rust,no_run
+//! use bitcoind_async_client::{traits::Reader, Auth, Client};
 //!
-//! let client = Client::new("http://localhost:8332".to_string(), "username".to_string(), "password".to_string(), None, None, None).await?;
+//! # async fn example() -> Result<(), bitcoind_async_client::error::ClientError> {
+//! let client = Client::new(
+//!     "http://localhost:8332".to_string(),
+//!     Auth::UserPass("username".to_string(), "password".to_string()),
+//!     None,
+//!     None,
+//!     None,
+//! )?;
 //!
 //! let blockchain_info = client.get_blockchain_info().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # License
