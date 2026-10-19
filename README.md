@@ -36,7 +36,9 @@ let blockchain_info = client.get_blockchain_info().await?;
 | `30_2` | 30 | 30.2 | |
 | `31_1` | 31 | 31.1 | yes |
 
-Enable exactly one version feature, matching your daemon's major version.
+For typed RPC methods, enable exactly one version feature matching your daemon's
+major version. Clients using only `call_raw` (the `raw_rpc` feature) can disable
+all version features.
 Every crate in a dependency graph that enables `bitcoind-async-client` features
 must agree on that version feature. Cargo features are additive; enabling two
 version features fails to compile.
