@@ -669,6 +669,29 @@ mod test {
         let got = client.get_block(expected).await.unwrap().block_hash();
         assert_eq!(*expected, got);
 
+        // getblock verbosity 1: coinbase_tx
+        let tip = blocks.last().unwrap();
+        let got = client
+            .call::<GetBlockVerboseOne>("getblock", &[to_value(tip.to_string()).unwrap()])
+            .await
+            .unwrap()
+            .into_model()
+            .unwrap()
+            .coinbase_tx
+            .expect("v31 block must include coinbase_tx");
+        let block = client.get_block(tip).await.unwrap();
+        let tx = &block.txdata[0];
+        assert_eq!(got.version, tx.version);
+        assert_eq!(got.locktime, tx.lock_time);
+        assert_eq!(got.sequence, tx.input[0].sequence);
+        assert_eq!(got.coinbase, tx.input[0].script_sig);
+        let expected_witness = if tx.input[0].witness.is_empty() {
+            None
+        } else {
+            Some(tx.input[0].witness.clone())
+        };
+        assert_eq!(got.witness, expected_witness);
+
         // get_block_at
         let target_height = blocks.len() as u64;
         let expected = blocks.last().unwrap();
@@ -749,12 +772,20 @@ mod test {
         let got = client.get_raw_mempool_verbose().await.unwrap();
         assert_eq!(got.0.len(), 1);
         assert_eq!(got.0.get(&txid).unwrap().height, 101);
+        // v31: cluster mempool fields
+        let entry = got.0.get(&txid).unwrap();
+        assert!(entry.chunk_weight.is_some());
+        assert!(entry.fees.chunk.is_some());
 
         // get_mempool_info
         let got = client.get_mempool_info().await.unwrap();
         assert!(got.loaded.unwrap_or(false));
         assert_eq!(got.size, 1);
         assert_eq!(got.unbroadcast_count, Some(1));
+        // v31: cluster mempool fields
+        assert!(got.limit_cluster_count.is_some());
+        assert!(got.limit_cluster_size.is_some());
+        assert!(got.optimal.is_some());
 
         // sign_raw_transaction_with_wallet
         let got = client
