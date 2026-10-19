@@ -47,11 +47,3 @@ body:
         - Windows (ARM)
     validations:
       required: false
-  - type: checkboxes
-    id: terms
-    attributes:
-      label: Code of Conduct
-      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/alpenlabs/bitcoind-async-client/blob/main/CONTRIBUTING.md#code-of-conduct)
-      options:
-        - label: I agree to follow the Code of Conduct
-          required: true
