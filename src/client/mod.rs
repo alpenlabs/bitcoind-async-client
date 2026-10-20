@@ -203,11 +203,14 @@ impl Client {
             }))
             .map_err(|e| ClientError::Param(format!("Error serializing request: {e}")))?;
 
+            // bitcoind never redirects. Following a redirect would resend the
+            // credentials and the request body to whatever host it names.
             let request = post(&self.url)
                 .with_header("Authorization", &self.authorization)
                 .with_header("Content-Type", "application/json")
                 .with_body(body)
-                .with_timeout(self.timeout);
+                .with_timeout(self.timeout)
+                .with_max_redirects(0);
 
             let response = self.http_client.send_async(request).await;
 
@@ -537,5 +540,58 @@ mod tests {
         assert_eq!(second, "second");
 
         server.await.expect("server task");
+    }
+
+    /// A redirect must not forward the `Authorization` header or the RPC body
+    /// to another host.
+    #[tokio::test]
+    async fn rpc_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let target = TcpListener::bind("127.0.0.1:0").await.expect("bind target");
+        let target_addr = target.local_addr().expect("target addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            read_http_request(&mut stream).await;
+            // 307 keeps the method and body, the worst case for a leak.
+            let response = format!(
+                concat!(
+                    "HTTP/1.1 307 Temporary Redirect\r\n",
+                    "Location: http://{}/\r\n",
+                    "Content-Length: 0\r\n\r\n"
+                ),
+                target_addr,
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            stream.flush().await.expect("flush response");
+        });
+
+        let client = Client::new(
+            format!("http://{addr}"),
+            Auth::UserPass("user".into(), "pass".into()),
+            Some(1),
+            None,
+            Some(5),
+        )
+        .expect("client");
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(
+            matches!(error, ClientError::HttpRedirect(_)),
+            "unexpected error: {error:?}"
+        );
+        server.await.expect("server task");
+
+        // Any connection to the redirect target would already be queued.
+        assert!(
+            timeout(Duration::from_millis(100), target.accept())
+                .await
+                .is_err(),
+            "client connected to the redirect target"
+        );
     }
 }
