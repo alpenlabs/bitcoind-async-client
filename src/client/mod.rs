@@ -1,8 +1,10 @@
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fmt,
-    fs::File,
+    fs::{File, OpenOptions},
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, PoisonError, RwLock,
@@ -72,10 +74,11 @@ pub enum Auth {
     /// the file again and retries the request once if the cookie changed, so it
     /// keeps working across bitcoind restarts.
     ///
-    /// The file must not be writable by untrusted users, since the client reads
-    /// it again on the request path. The retry relies on the server rejecting
-    /// bad credentials before running the request, as bitcoind does. A proxy
-    /// that returns 401 after forwarding a request could see that request twice.
+    /// The file and its directory must not be writable by untrusted users, since
+    /// the client reads the file again on the request path. The retry relies on
+    /// the server rejecting bad credentials before running the request, as
+    /// bitcoind does. A proxy that returns 401 after forwarding a request could
+    /// see that request twice.
     CookieFile(PathBuf),
 }
 
@@ -84,15 +87,18 @@ impl Auth {
         match self {
             Auth::UserPass(u, p) => Ok((Some(u), Some(p))),
             Auth::CookieFile(path) => {
-                let metadata = std::fs::metadata(&path)
+                let file = open_cookie_file(&path)
+                    .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
+                // Check the opened file, not the path, so the path can't be
+                // swapped between the check and the read.
+                let metadata = file
+                    .metadata()
                     .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
                 if !metadata.is_file() {
                     return Err(ClientError::Other(
                         "Cookie file is not a regular file".into(),
                     ));
                 }
-                let file = File::open(path)
-                    .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
                 let mut bytes = Vec::new();
                 file.take(MAX_COOKIE_FILE_BYTES + 1)
                     .read_to_end(&mut bytes)
@@ -113,6 +119,17 @@ impl Auth {
             }
         }
     }
+}
+
+/// Opens a cookie file for reading without blocking if the path is a FIFO.
+fn open_cookie_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    // Opening a FIFO for reading blocks until a writer shows up. With
+    // `O_NONBLOCK` the open returns at once and the type check rejects it.
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    options.open(path)
 }
 
 /// Basic auth credentials, shared by all clones of a [`Client`].
@@ -806,6 +823,37 @@ mod tests {
         )
         .is_err());
         std::fs::remove_dir(path).unwrap();
+    }
+
+    /// A FIFO swapped in for the cookie must not block the open.
+    #[cfg(unix)]
+    #[test]
+    fn cookie_file_rejects_fifo_without_blocking() {
+        let path = temp_cookie_file("fifo");
+        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c_path` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        // Without `O_NONBLOCK` the open would wait for a writer forever.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fifo = path.clone();
+        std::thread::spawn(move || {
+            let opened = open_cookie_file(&fifo).map(|file| file.metadata().unwrap().is_file());
+            let rejected = Client::new(
+                "http://127.0.0.1".into(),
+                Auth::CookieFile(fifo),
+                None,
+                None,
+                None,
+            )
+            .is_err();
+            tx.send((opened.ok(), rejected)).unwrap();
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok((Some(false), true))
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

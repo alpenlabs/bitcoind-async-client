@@ -164,6 +164,7 @@ dependencies = [
  "bitreq 0.3.7",
  "corepc-types",
  "hex-conservative 0.2.2",
+ "libc",
  "proptest",
  "secp256k1",
  "serde",
