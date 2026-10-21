@@ -1,11 +1,11 @@
 use std::{
     fmt,
     fs::File,
-    io::{BufRead, BufReader},
+    io::Read,
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, RwLock,
+        Arc, PoisonError, RwLock,
     },
     time::Duration,
 };
@@ -51,6 +51,9 @@ const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 /// The default capacity for the HTTP client connection pool.
 const DEFAULT_HTTP_CLIENT_CAPACITY: usize = 10;
 
+/// The maximum size of a cookie file in bytes.
+const MAX_COOKIE_FILE_BYTES: u64 = 1024;
+
 /// Custom implementation to convert a value to a `Value` type.
 pub fn to_value<T>(value: T) -> ClientResult<Value>
 where
@@ -68,6 +71,11 @@ pub enum Auth {
     /// Read credentials from bitcoind's cookie file. After a 401, the client reads
     /// the file again and retries the request once if the cookie changed, so it
     /// keeps working across bitcoind restarts.
+    ///
+    /// The file must not be writable by untrusted users, since the client reads
+    /// it again on the request path. The retry relies on the server rejecting
+    /// bad credentials before running the request, as bitcoind does. A proxy
+    /// that returns 401 after forwarding a request could see that request twice.
     CookieFile(PathBuf),
 }
 
@@ -76,13 +84,28 @@ impl Auth {
         match self {
             Auth::UserPass(u, p) => Ok((Some(u), Some(p))),
             Auth::CookieFile(path) => {
-                let line = BufReader::new(
-                    File::open(path).map_err(|e| ClientError::Other(e.to_string()))?,
-                )
-                .lines()
-                .next()
-                .ok_or(ClientError::Other("Invalid cookie file".to_string()))?
-                .map_err(|e| ClientError::Other(e.to_string()))?;
+                let metadata = std::fs::metadata(&path)
+                    .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
+                if !metadata.is_file() {
+                    return Err(ClientError::Other(
+                        "Cookie file is not a regular file".into(),
+                    ));
+                }
+                let file = File::open(path)
+                    .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
+                let mut bytes = Vec::new();
+                file.take(MAX_COOKIE_FILE_BYTES + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| ClientError::Other(format!("Could not read cookie file: {e}")))?;
+                if bytes.len() as u64 > MAX_COOKIE_FILE_BYTES {
+                    return Err(ClientError::Other("Cookie file is too large".into()));
+                }
+                let contents = std::str::from_utf8(&bytes)
+                    .map_err(|_| ClientError::Other("Invalid cookie file".into()))?;
+                let line = contents
+                    .lines()
+                    .next()
+                    .ok_or(ClientError::Other("Invalid cookie file".into()))?;
                 let colon = line
                     .find(':')
                     .ok_or(ClientError::Other("Invalid cookie file".to_string()))?;
@@ -103,12 +126,15 @@ struct Credentials {
 impl Credentials {
     /// Returns an owned snapshot of the current authorization header.
     fn header(&self) -> Arc<str> {
-        self.header.read().expect("credentials lock").clone()
+        self.header
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
-    /// Re-reads the cookie after a request sent with `stale` got a 401.
-    /// Returns true when a retry may succeed.
-    fn refresh(&self, stale: &str) -> bool {
+    /// Re-reads the cookie on a blocking thread after a request sent with `stale`
+    /// got a 401. Returns true when a retry may succeed.
+    async fn refresh(&self, stale: &str) -> bool {
         let Some(path) = &self.cookie_file else {
             return false;
         };
@@ -116,17 +142,32 @@ impl Credentials {
         if &*self.header() != stale {
             return true;
         }
-        match authorization_header(Auth::CookieFile(path.clone())) {
-            Ok(header) if &*header != stale => {
-                *self.header.write().expect("credentials lock") = header;
-                true
+        let path = path.clone();
+        let result =
+            tokio::task::spawn_blocking(move || authorization_header(Auth::CookieFile(path))).await;
+        match result {
+            Ok(Ok(header)) if &*header != stale => self.publish(stale, header),
+            Ok(Ok(_)) => false,
+            Ok(Err(err)) => {
+                warn!(%err, "Error refreshing RPC credentials");
+                false
             }
-            Ok(_) => false,
             Err(err) => {
                 warn!(%err, "Error refreshing RPC credentials");
                 false
             }
         }
+    }
+
+    /// Replaces the header only if it still holds `stale`, so a slow refresh
+    /// cannot roll back a newer cookie. Returns true because a retry with the
+    /// current header may succeed.
+    fn publish(&self, stale: &str, header: Arc<str>) -> bool {
+        let mut current = self.header.write().unwrap_or_else(PoisonError::into_inner);
+        if &**current == stale {
+            *current = header;
+        }
+        true
     }
 }
 
@@ -275,11 +316,14 @@ impl Client {
                     let status_code = resp.status_code;
                     if status_code == 401
                         && !auth_refreshed
-                        && self.credentials.refresh(&authorization)
+                        && self.credentials.refresh(&authorization).await
                     {
                         auth_refreshed = true;
                         debug!(%method, "Retrying RPC with refreshed credentials");
                         continue;
+                    }
+                    if status_code == 401 {
+                        return Err(ClientError::Status(401, resp.reason_phrase.clone()));
                     }
                     let raw_response = resp
                         .as_str()
@@ -713,6 +757,145 @@ mod tests {
         assert_authorization(&requests[0], "__cookie__:a");
         assert_authorization(&requests[1], "__cookie__:b");
         assert_authorization(&requests[2], "__cookie__:b");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cookie_file_accepts_missing_newline() {
+        let path = temp_cookie_file("no-newline");
+        std::fs::write(&path, "user:pass").unwrap();
+        let header = authorization_header(Auth::CookieFile(path.clone())).unwrap();
+        assert_eq!(&*header, "Basic dXNlcjpwYXNz");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cookie_file_accepts_crlf() {
+        let path = temp_cookie_file("crlf");
+        std::fs::write(&path, "user:pass\r\n").unwrap();
+        let header = authorization_header(Auth::CookieFile(path.clone())).unwrap();
+        assert_eq!(&*header, "Basic dXNlcjpwYXNz");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cookie_file_rejects_oversized_line() {
+        let path = temp_cookie_file("oversized");
+        std::fs::write(&path, format!("user:{}", "p".repeat(2048 - 5))).unwrap();
+        assert!(Client::new(
+            "http://127.0.0.1".into(),
+            Auth::CookieFile(path.clone()),
+            None,
+            None,
+            None,
+        )
+        .is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cookie_file_rejects_directory() {
+        let path = temp_cookie_file("directory");
+        std::fs::create_dir(&path).unwrap();
+        assert!(Client::new(
+            "http://127.0.0.1".into(),
+            Auth::CookieFile(path.clone()),
+            None,
+            None,
+            None,
+        )
+        .is_err());
+        std::fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn cookie_refresh_keeps_newer_header() {
+        let credentials = Credentials {
+            cookie_file: None,
+            header: RwLock::new(Arc::from("newer")),
+        };
+
+        assert!(credentials.publish("stale", Arc::from("older")));
+        assert_eq!(&*credentials.header(), "newer");
+        assert!(credentials.publish("newer", Arc::from("latest")));
+        assert_eq!(&*credentials.header(), "latest");
+    }
+
+    #[test]
+    fn credentials_recover_from_poisoned_lock() {
+        let credentials = Credentials {
+            cookie_file: None,
+            header: RwLock::new(Arc::from("stale")),
+        };
+        let result = std::panic::catch_unwind(|| {
+            let _guard = credentials
+                .header
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            panic!("poison credentials lock");
+        });
+        assert!(result.is_err());
+
+        assert_eq!(&*credentials.header(), "stale");
+        assert!(credentials.publish("stale", Arc::from("fresh")));
+        assert_eq!(&*credentials.header(), "fresh");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_401_body_is_not_in_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            read_http_request(&mut stream).await;
+            let body = "echoed-secret";
+            let response = format!(
+                concat!(
+                    "HTTP/1.1 401 Unauthorized\r\n",
+                    "WWW-Authenticate: Basic realm=\"jsonrpc\"\r\n",
+                    "Content-Length: {}\r\n\r\n{}"
+                ),
+                body.len(),
+                body,
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+            stream.flush().await.expect("flush response");
+        });
+        let client = Client::new(
+            format!("http://{addr}"),
+            Auth::UserPass("user".into(), "pass".into()),
+            Some(0),
+            None,
+            Some(5),
+        )
+        .unwrap();
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(matches!(error, ClientError::Status(401, _)));
+        assert!(!error.to_string().contains("echoed-secret"));
+        assert!(!format!("{error:?}").contains("echoed-secret"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn changed_cookie_still_returns_401_after_one_retry() {
+        let path = temp_cookie_file("retry-limit");
+        std::fs::write(&path, "__cookie__:a").unwrap();
+        let (url, stop, server) = auth_server(false).await;
+        let client =
+            Client::new(url, Auth::CookieFile(path.clone()), Some(0), None, Some(5)).unwrap();
+        std::fs::write(&path, "__cookie__:b").unwrap();
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(matches!(error, ClientError::Status(401, _)));
+        stop.send(()).unwrap();
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_authorization(&requests[0], "__cookie__:a");
+        assert_authorization(&requests[1], "__cookie__:b");
         std::fs::remove_file(path).unwrap();
     }
 
