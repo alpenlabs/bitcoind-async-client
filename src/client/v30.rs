@@ -1297,6 +1297,27 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_cookie_file_refresh_after_401() {
+        init_tracing();
+
+        let (bitcoind, _) = get_bitcoind_and_client();
+        let path = crate::client::tests::temp_cookie_file("bitcoind-refresh");
+        std::fs::write(&path, "__cookie__:stale").unwrap();
+        let client = Client::new(
+            bitcoind.rpc_url(),
+            Auth::CookieFile(path.clone()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        std::fs::copy(&bitcoind.params.cookie_file, &path).unwrap();
+
+        client.get_blockchain_info().await.unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn test_send_raw_transaction_exposes_rpc_error_code_on_http_500() {
         init_tracing();
 
