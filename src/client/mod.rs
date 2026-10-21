@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, RwLock,
     },
     time::Duration,
 };
@@ -63,7 +63,11 @@ where
 /// The different authentication methods for the client.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Auth {
+    /// Authenticate with a username and password.
     UserPass(String, String),
+    /// Read credentials from bitcoind's cookie file. After a 401, the client reads
+    /// the file again and retries the request once if the cookie changed, so it
+    /// keeps working across bitcoind restarts.
     CookieFile(PathBuf),
 }
 
@@ -88,14 +92,66 @@ impl Auth {
     }
 }
 
+/// Basic auth credentials, shared by all clones of a [`Client`].
+struct Credentials {
+    /// Cookie file to re-read after a 401, for [`Auth::CookieFile`].
+    cookie_file: Option<PathBuf>,
+    /// Current `Authorization` header value.
+    header: RwLock<Arc<str>>,
+}
+
+impl Credentials {
+    /// Returns an owned snapshot of the current authorization header.
+    fn header(&self) -> Arc<str> {
+        self.header.read().expect("credentials lock").clone()
+    }
+
+    /// Re-reads the cookie after a request sent with `stale` got a 401.
+    /// Returns true when a retry may succeed.
+    fn refresh(&self, stale: &str) -> bool {
+        let Some(path) = &self.cookie_file else {
+            return false;
+        };
+        // Another clone or task may have reloaded the cookie already.
+        if &*self.header() != stale {
+            return true;
+        }
+        match authorization_header(Auth::CookieFile(path.clone())) {
+            Ok(header) if &*header != stale => {
+                *self.header.write().expect("credentials lock") = header;
+                true
+            }
+            Ok(_) => false,
+            Err(err) => {
+                warn!(%err, "Error refreshing RPC credentials");
+                false
+            }
+        }
+    }
+}
+
+/// Builds a Basic authorization header from nonempty credentials.
+fn authorization_header(auth: Auth) -> ClientResult<Arc<str>> {
+    let (username_opt, password_opt) = auth.get_user_pass()?;
+    let (Some(username), Some(password)) = (
+        username_opt.filter(|u| !u.is_empty()),
+        password_opt.filter(|p| !p.is_empty()),
+    ) else {
+        return Err(ClientError::MissingUserPassword);
+    };
+
+    let user_pw = general_purpose::STANDARD.encode(format!("{username}:{password}"));
+    Ok(format!("Basic {user_pw}").into())
+}
+
 /// An `async` client for interacting with a `bitcoind` instance.
 #[derive(Clone)]
 pub struct Client {
     /// The URL of the `bitcoind` instance.
     url: String,
 
-    /// The authorization header value for Basic auth.
-    authorization: String,
+    /// Basic auth credentials shared by all clones.
+    credentials: Arc<Credentials>,
 
     /// The timeout for requests in seconds.
     timeout: u64,
@@ -147,16 +203,14 @@ impl Client {
         retry_interval: Option<u64>,
         timeout: Option<u64>,
     ) -> ClientResult<Self> {
-        let (username_opt, password_opt) = auth.get_user_pass()?;
-        let (Some(username), Some(password)) = (
-            username_opt.filter(|u| !u.is_empty()),
-            password_opt.filter(|p| !p.is_empty()),
-        ) else {
-            return Err(ClientError::MissingUserPassword);
+        let cookie_file = match &auth {
+            Auth::CookieFile(path) => Some(path.clone()),
+            Auth::UserPass(..) => None,
         };
-
-        let user_pw = general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        let authorization = format!("Basic {user_pw}");
+        let credentials = Arc::new(Credentials {
+            cookie_file,
+            header: RwLock::new(authorization_header(auth)?),
+        });
 
         let id = Arc::new(AtomicUsize::new(0));
 
@@ -170,7 +224,7 @@ impl Client {
 
         Ok(Self {
             url,
-            authorization,
+            credentials,
             timeout,
             id,
             max_retries,
@@ -189,7 +243,9 @@ impl Client {
         params: &[Value],
     ) -> ClientResult<T> {
         let mut retries = 0;
+        let mut auth_refreshed = false;
         loop {
+            let authorization = self.credentials.header();
             // RPC parameters and responses can contain private descriptors and keys.
             debug!(%method, %retries, "Calling bitcoin client");
 
@@ -206,7 +262,7 @@ impl Client {
             // bitcoind never redirects. Following a redirect would resend the
             // credentials and the request body to whatever host it names.
             let request = post(&self.url)
-                .with_header("Authorization", &self.authorization)
+                .with_header("Authorization", &*authorization)
                 .with_header("Content-Type", "application/json")
                 .with_body(body)
                 .with_timeout(self.timeout)
@@ -217,6 +273,14 @@ impl Client {
             match response {
                 Ok(resp) => {
                     let status_code = resp.status_code;
+                    if status_code == 401
+                        && !auth_refreshed
+                        && self.credentials.refresh(&authorization)
+                    {
+                        auth_refreshed = true;
+                        debug!(%method, "Retrying RPC with refreshed credentials");
+                        continue;
+                    }
                     let raw_response = resp
                         .as_str()
                         .map_err(|e| ClientError::Parse(e.to_string()))?;
@@ -431,13 +495,13 @@ mod tests {
             "rpc-password-secret",
             "private-wallet",
             "url-secret",
-            client.authorization.as_str(),
+            &client.credentials.header(),
         ] {
             assert!(!output.contains(secret), "sensitive value appeared in logs");
         }
     }
 
-    async fn read_http_request(stream: &mut TcpStream) {
+    async fn read_http_request(stream: &mut TcpStream) -> String {
         let mut buf = vec![0u8; 4096];
         let mut total = Vec::new();
         loop {
@@ -463,9 +527,10 @@ mod tests {
                 })
                 .unwrap_or(0);
             if total.len() >= hdr_end + 4 + cl {
-                break;
+                return headers.to_string();
             }
         }
+        String::new()
     }
 
     async fn write_json_response(stream: &mut TcpStream, body: &str) {
@@ -484,6 +549,171 @@ mod tests {
             .await
             .expect("write response");
         stream.flush().await.expect("flush response");
+    }
+
+    pub(super) fn temp_cookie_file(name: &str) -> PathBuf {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "bitcoind-async-client-{name}-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        ))
+    }
+
+    async fn write_unauthorized_response(stream: &mut TcpStream) {
+        stream
+            .write_all(
+                concat!(
+                    "HTTP/1.1 401 Unauthorized\r\n",
+                    "Connection: keep-alive\r\n",
+                    "WWW-Authenticate: Basic realm=\"jsonrpc\"\r\n",
+                    "Content-Length: 0\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write response");
+        stream.flush().await.expect("flush response");
+    }
+
+    async fn auth_server(
+        succeed_after_401: bool,
+    ) -> (
+        String,
+        oneshot::Sender<()>,
+        tokio::task::JoinHandle<Vec<String>>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (stop, stopped) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            tokio::select! {
+                _ = stopped => {},
+                _ = async {
+                    loop {
+                        let (mut stream, _) = listener.accept().await.expect("accept");
+                        loop {
+                            let head = read_http_request(&mut stream).await;
+                            if head.is_empty() {
+                                break;
+                            }
+                            requests.push(head);
+                            if succeed_after_401 && requests.len() > 1 {
+                                write_json_response(
+                                    &mut stream,
+                                    r#"{"result":"ok","error":null,"id":0}"#,
+                                ).await;
+                            } else {
+                                write_unauthorized_response(&mut stream).await;
+                            }
+                        }
+                    }
+                } => {},
+            }
+            requests
+        });
+        (format!("http://{addr}"), stop, server)
+    }
+
+    fn assert_authorization(head: &str, cookie: &str) {
+        let header = head.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("Authorization")
+                .then_some(value.trim())
+        });
+        let expected = format!("Basic {}", general_purpose::STANDARD.encode(cookie));
+        assert_eq!(header, Some(expected.as_str()));
+    }
+
+    #[tokio::test]
+    async fn cookie_refresh_retries_once_after_401() {
+        let path = temp_cookie_file("refresh");
+        std::fs::write(&path, "__cookie__:a").unwrap();
+        let (url, stop, server) = auth_server(true).await;
+        let client =
+            Client::new(url, Auth::CookieFile(path.clone()), Some(0), None, Some(5)).unwrap();
+        std::fs::write(&path, "__cookie__:b").unwrap();
+
+        let result: String = client.call("ping", &[]).await.unwrap();
+        assert_eq!(result, "ok");
+        stop.send(()).unwrap();
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_authorization(&requests[0], "__cookie__:a");
+        assert_authorization(&requests[1], "__cookie__:b");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unchanged_cookie_returns_401_without_retry() {
+        let path = temp_cookie_file("unchanged");
+        std::fs::write(&path, "__cookie__:a").unwrap();
+        let (url, stop, server) = auth_server(false).await;
+        let client =
+            Client::new(url, Auth::CookieFile(path.clone()), Some(0), None, Some(5)).unwrap();
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(matches!(error, ClientError::Status(401, _)));
+        stop.send(()).unwrap();
+        assert_eq!(server.await.unwrap().len(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn user_pass_401_is_not_retried() {
+        let (url, stop, server) = auth_server(false).await;
+        let client = Client::new(
+            url,
+            Auth::UserPass("user".into(), "pass".into()),
+            Some(0),
+            None,
+            Some(5),
+        )
+        .unwrap();
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(matches!(error, ClientError::Status(401, _)));
+        stop.send(()).unwrap();
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_cookie_after_401_returns_401() {
+        let path = temp_cookie_file("missing");
+        std::fs::write(&path, "__cookie__:a").unwrap();
+        let (url, stop, server) = auth_server(false).await;
+        let client =
+            Client::new(url, Auth::CookieFile(path.clone()), Some(0), None, Some(5)).unwrap();
+        std::fs::remove_file(path).unwrap();
+
+        let error = client.call::<Value>("ping", &[]).await.unwrap_err();
+        assert!(matches!(error, ClientError::Status(401, _)));
+        stop.send(()).unwrap();
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn clones_share_refreshed_cookie() {
+        let path = temp_cookie_file("clones");
+        std::fs::write(&path, "__cookie__:a").unwrap();
+        let (url, stop, server) = auth_server(true).await;
+        let client =
+            Client::new(url, Auth::CookieFile(path.clone()), Some(0), None, Some(5)).unwrap();
+        let clone = client.clone();
+        std::fs::write(&path, "__cookie__:b").unwrap();
+
+        let result: String = client.call("ping", &[]).await.unwrap();
+        assert_eq!(result, "ok");
+        let result: String = clone.call("ping", &[]).await.unwrap();
+        assert_eq!(result, "ok");
+        stop.send(()).unwrap();
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_authorization(&requests[0], "__cookie__:a");
+        assert_authorization(&requests[1], "__cookie__:b");
+        assert_authorization(&requests[2], "__cookie__:b");
+        std::fs::remove_file(path).unwrap();
     }
 
     /// Regression test for issue #101: a pooled keep-alive socket that is later
