@@ -28,7 +28,7 @@ raw_rpc = []
 [dependencies]
 base64 = "0.23.1"
 bitcoin = { version = "0.32.9", features = ["serde", "base64"] }
-bitreq = { version = "0.3.5", default-features = false, features = [
+bitreq = { version = "0.4.3", default-features = false, features = [
   "async-https",
 ] }
 corepc-types = "0.16.0" # try to keep in sync with bitcoind

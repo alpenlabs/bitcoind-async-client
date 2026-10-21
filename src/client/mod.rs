@@ -323,7 +323,7 @@ impl Client {
                 .with_header("Authorization", &*authorization)
                 .with_header("Content-Type", "application/json")
                 .with_body(body)
-                .with_timeout(self.timeout)
+                .with_timeout(Duration::from_secs(self.timeout))
                 .with_max_redirects(0);
 
             let response = self.http_client.send_async(request).await;
