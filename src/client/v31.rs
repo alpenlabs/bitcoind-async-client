@@ -8,7 +8,6 @@ use bitcoin::{
     consensus::{self, encode::serialize_hex},
     Address, Block, BlockHash, Network, Transaction, Txid,
 };
-use corepc_types::model;
 use corepc_types::v31::{
     CreateWallet, EstimateSmartFee, GetAddressInfo, GetBlockHeader, GetBlockVerboseOne,
     GetBlockVerboseZero, GetBlockchainInfo, GetMempoolInfo, GetNewAddress, GetRawMempool,
@@ -17,6 +16,7 @@ use corepc_types::v31::{
     SignRawTransactionWithWallet, SubmitPackage, TestMempoolAccept, WalletCreateFundedPsbt,
     WalletProcessPsbt,
 };
+use corepc_types::{model, v32};
 use serde_json::Value;
 use tracing::*;
 
@@ -255,11 +255,22 @@ impl Wallet for Client {
         Ok(address_unchecked)
     }
     async fn get_transaction(&self, txid: &Txid) -> ClientResult<model::GetTransaction> {
-        let resp = self
-            .call::<GetTransaction>("gettransaction", &[to_value(txid.to_string())?])
+        let response: Value = self
+            .call("gettransaction", &[to_value(txid.to_string())?])
             .await?;
-        resp.into_model()
-            .map_err(|e| ClientError::Parse(e.to_string()))
+        // Core 32 adds alternate_wtxids and omits the deprecated BIP125 field
+        // by default. Select the response type from the same RPC reply.
+        if response.get("alternate_wtxids").is_some() {
+            let tx: v32::GetTransaction =
+                serde_json::from_value(response).map_err(|e| ClientError::Parse(e.to_string()))?;
+            tx.into_model()
+                .map_err(|e| ClientError::Parse(e.to_string()))
+        } else {
+            let tx: GetTransaction =
+                serde_json::from_value(response).map_err(|e| ClientError::Parse(e.to_string()))?;
+            tx.into_model()
+                .map_err(|e| ClientError::Parse(e.to_string()))
+        }
     }
 
     async fn list_transactions(

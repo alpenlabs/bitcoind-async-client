@@ -461,6 +461,52 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "31_1")]
+    #[tokio::test]
+    async fn get_transaction_accepts_core31_and_core32_replies() {
+        use corepc_types::model::Bip125Replaceable;
+
+        use crate::traits::Wallet;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let fixtures = [
+            include_str!("fixtures/core31-default.json"),
+            include_str!("fixtures/core32-default.json"),
+        ];
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            for (id, fixture) in fixtures.into_iter().enumerate() {
+                assert!(!read_http_request(&mut stream).await.is_empty());
+                let result: Value = serde_json::from_str(fixture).unwrap();
+                let body = json!({"id": id, "result": result, "error": null});
+                write_json_response(&mut stream, &body.to_string()).await;
+            }
+        });
+        let client = Client::new(
+            format!("http://{address}"),
+            Auth::UserPass("test".into(), "test".into()),
+            Some(0),
+            None,
+            Some(5),
+        )
+        .unwrap();
+
+        for (fixture, expected_bip125) in fixtures
+            .into_iter()
+            .zip([Bip125Replaceable::No, Bip125Replaceable::Unknown])
+        {
+            let reply: Value = serde_json::from_str(fixture).unwrap();
+            let txid = reply["txid"].as_str().unwrap().parse().unwrap();
+            let tx = client.get_transaction(&txid).await.unwrap();
+            assert_eq!(tx.tx.compute_txid(), txid);
+            assert_eq!(tx.confirmations, reply["confirmations"].as_i64().unwrap());
+            assert_eq!(tx.bip125_replaceable, expected_bip125);
+        }
+
+        server.await.unwrap();
+    }
+
     #[derive(Clone, Default)]
     struct LogBuffer(Arc<Mutex<Vec<u8>>>);
 
