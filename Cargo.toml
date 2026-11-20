@@ -31,7 +31,8 @@ bitcoin = { version = "0.32.9", features = ["serde", "base64"] }
 bitreq = { version = "0.4.3", default-features = false, features = [
   "async-https",
 ] }
-corepc-types = "0.16.0" # try to keep in sync with bitcoind
+# Temporary until the release containing rust-bitcoin/corepc#774 is available.
+corepc-types = { git = "https://git.rust-bitcoin.org/AdityaKaushal17/corepc.git", rev = "268d6fe7a484a31b7383c88bf1554913c40ecf45" }
 hex = { package = "hex-conservative", version = "0.2.1" } # for optimization keep in sync with bitcoin
 secp256k1 = { version = "0.29.1", features = [ # for optimization keep in sync with bitcoin
   "global-context",
