@@ -1,0 +1,36 @@
+{
+  "amount": 0.00000000,
+  "confirmations": 1,
+  "generated": true,
+  "blockhash": "60be3354183b63dfb65ecc534277daa6b6e6489d86a22d4c8c77aef87980d566",
+  "blockheight": 1,
+  "blockindex": 0,
+  "blocktime": 1795056061,
+  "txid": "c83d1009c9291da90696464872970db5cfd7f1a1971374e0038813de32d8c9ef",
+  "wtxid": "5914d39659f1644b0cfdaa24fe7a5c47f7c603c9b2fa36819cee74efa6fea880",
+  "walletconflicts": [
+  ],
+  "mempoolconflicts": [
+  ],
+  "time": 1795056061,
+  "timereceived": 1795056061,
+  "bip125-replaceable": "no",
+  "details": [
+    {
+      "address": "bcrt1q9zsj67wauk90xdk977gu05dypcxzr3w56s2z6d",
+      "parent_descs": [
+        "wpkh([52303e69/84h/1h/0h]tpubDDHyLvnaWSW57XqQhyNMi5QgkfrkPusRvQMT34AkvyrHfMWrwZSsEgEkdeek3u8v1UcmuHrxAfbTB7mvSj9Mo4E2eAADb4i1nhQifWu19Hj/0/*)#pqwe8qua"
+      ],
+      "category": "immature",
+      "amount": 50.00000000,
+      "label": "",
+      "vout": 0,
+      "abandoned": false
+    }
+  ],
+  "hex": "020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff025100feffffff0200f2052a0100000016001428a12d79dde58af336c5f791c7d1a40e0c21c5d40000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000",
+  "lastprocessedblock": {
+    "hash": "60be3354183b63dfb65ecc534277daa6b6e6489d86a22d4c8c77aef87980d566",
+    "height": 1
+  }
+}

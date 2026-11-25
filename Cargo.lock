@@ -162,7 +162,7 @@ dependencies = [
  "bitcoin",
  "bitcoind",
  "bitreq",
- "corepc-types",
+ "corepc-types 0.17.0",
  "hex-conservative 0.2.2",
  "libc",
  "proptest",
@@ -251,7 +251,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace925cc8c38db5d2e3d7cd483e9f15814728b8ea4116b297c44247d1cadc770"
 dependencies = [
  "bitcoin",
- "corepc-types",
+ "corepc-types 0.16.0",
  "jsonrpc",
  "log",
  "serde",
@@ -263,6 +263,16 @@ name = "corepc-types"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fa32f494e25aa816dc5adfed14374676765deb0914b8fe8dfb63058866cce86"
+dependencies = [
+ "bitcoin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "corepc-types"
+version = "0.17.0"
+source = "git+https://git.rust-bitcoin.org/AdityaKaushal17/corepc.git?rev=268d6fe7a484a31b7383c88bf1554913c40ecf45#268d6fe7a484a31b7383c88bf1554913c40ecf45"
 dependencies = [
  "bitcoin",
  "serde",
